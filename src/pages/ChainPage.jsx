@@ -57,7 +57,7 @@ export default function ChainPage() {
     const forExp = inst.filter(i => i.expiration_timestamp === expiryTs)
     const strikes = [...new Set(forExp.map(i => i.strike))].sort((x,y) => x - y)
     const spotNow = sp || spot
-    const BATCH = 8
+    const BATCH = 20
     const allRows = []
     for (let i = 0; i < strikes.length; i += BATCH) {
       const batch = strikes.slice(i, i + BATCH)

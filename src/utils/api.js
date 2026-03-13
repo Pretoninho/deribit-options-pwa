@@ -1,6 +1,6 @@
 const API = 'https://www.deribit.com/api/v2/public'
 
-async function apiFetch(url, timeoutMs = 8000) {
+async function apiFetch(url, timeoutMs = 15000) {
   const timeout = new Promise((_, rej) =>
     setTimeout(() => rej(new Error('Timeout: ' + url.split('/').pop().split('?')[0])), timeoutMs)
   )
