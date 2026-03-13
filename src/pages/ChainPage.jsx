@@ -181,7 +181,7 @@ export default function ChainPage() {
       {activeTab === 'chain' && (
         <>
           <div className="expiry-chips">
-            {expiries.slice(0,10).map(ts => (
+            {expiries.map(ts => (
               <button key={ts} className={`expiry-chip${selExpiry===ts?' active':''}`} onClick={() => switchExpiry(ts)}>
                 {fmtTs(ts)}
               </button>
@@ -241,7 +241,7 @@ export default function ChainPage() {
           <div style={{ marginBottom:14 }}>
             <div style={{ fontSize:10, color:'var(--text-muted)', marginBottom:8, letterSpacing:'1px', textTransform:'uppercase' }}>Échéance</div>
             <div className="expiry-chips">
-              {expiries.slice(0,12).map(ts => (
+              {expiries.map(ts => (
                 <button key={ts}
                   className={`expiry-chip${diExpiry===ts?' active':''}`}
                   onClick={() => setDiExpiry(ts)}>
