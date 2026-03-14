@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      registerType: "autoUpdate", version: "2.0",
       includeAssets: ['favicon.ico'],
       manifest: {
         name: 'Deribit Options & DI Tracker',
