@@ -10,7 +10,7 @@ function daysUntil(ts) {
   return Math.max(0.01, (ts - Date.now()) / 86400000)
 }
 
-// Taux DI via BS avec IV du strike exact
+// Taux DI via Delta × IV × √T — plus proche de Nexo
 function calcDIRateStrike(iv, spot, strike, days, type) {
   if (!iv || !spot || !strike || !days) return null
   const T      = days / 365
