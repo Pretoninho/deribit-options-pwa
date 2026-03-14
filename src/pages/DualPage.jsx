@@ -41,7 +41,7 @@ export default function DualPage() {
         setOffers(ofs => ofs.map(o => o.asset === asset ? { ...o, deribitIV: data.iv } : o))
         return next
       })
-    } catch (e) { console.warn('IV fetch error:', e.message) }
+    } catch(e) { console.warn('IV fetch error:', e.message) }
   }, [])
 
   const fetchAllIV = async () => {
@@ -93,20 +93,20 @@ export default function DualPage() {
         </button>
       </div>
 
-      <div className="card" style={{ marginBottom: 12 }}>
+      <div className="card" style={{ marginBottom:12 }}>
         <div className="card-header">
           <span>Mon DCA BTC</span>
-          {dcaVal && <span style={{ color: 'var(--atm)', fontFamily: 'var(--mono)', fontSize: 13 }}>{fmtUSD(dcaVal)}</span>}
+          {dcaVal && <span style={{ color:'var(--atm)', fontFamily:'var(--mono)', fontSize:13 }}>{fmtUSD(dcaVal)}</span>}
         </div>
-        <div style={{ padding: '12px 16px' }}>
+        <div style={{ padding:'12px 16px' }}>
           <input className="di-input" type="number" placeholder="Ex: 52000" value={dca} onChange={e => setDca(e.target.value)} />
         </div>
       </div>
 
-      <div className="asset-toggle" style={{ marginBottom: 14, width: '100%' }}>
+      <div style={{ display:'flex', marginBottom:14, borderBottom:'1px solid var(--border)' }}>
         {[['add','+ Ajouter'],['positions','Contrats'],['analysis','P&L']].map(([id, label]) => (
           <button key={id}
-            style={{ flex:1, padding:'8px 4px', background:'none', border:'none', cursor:'pointer', fontFamily:'var(--sans)', fontSize:12, fontWeight:700, color: activeTab===id ? 'var(--accent)' : 'var(--text-muted)', borderBottom: activeTab===id ? '2px solid var(--accent)' : '2px solid transparent', transition:'all .2s' }}
+            style={{ flex:1, padding:'8px 4px', background:'none', border:'none', cursor:'pointer', fontFamily:'var(--sans)', fontSize:12, fontWeight:700, color: activeTab===id?'var(--accent)':'var(--text-muted)', borderBottom: activeTab===id?'2px solid var(--accent)':'2px solid transparent', transition:'all .2s' }}
             onClick={() => { setActiveTab(id); if (id==='analysis') refreshSpots() }}>
             {label}
           </button>
@@ -115,11 +115,12 @@ export default function DualPage() {
 
       {error && <div className="error-box">⚠ {error}</div>}
 
+      {/* ── ADD ── */}
       {activeTab === 'add' && (
         <div className="card fade-in">
           <div className="card-header">Nouveau contrat</div>
-          <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div style={{ padding:'16px', display:'flex', flexDirection:'column', gap:12 }}>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
               <div className="di-field">
                 <label className="di-label">Actif</label>
                 <select className="di-input di-select" value={form.asset} onChange={e => setForm(f => ({ ...f, asset: e.target.value }))}>
@@ -135,7 +136,7 @@ export default function DualPage() {
                 </select>
               </div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
               <div className="di-field">
                 <label className="di-label">Strike ($)</label>
                 <input className="di-input" type="number" placeholder="Ex: 95000" value={form.strike} onChange={e => setForm(f => ({ ...f, strike: e.target.value }))} />
@@ -145,7 +146,7 @@ export default function DualPage() {
                 <input className="di-input" type="number" min="1" placeholder="7" value={form.days} onChange={e => setForm(f => ({ ...f, days: e.target.value }))} />
               </div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
               <div className="di-field">
                 <label className="di-label">Taux APY (%)</label>
                 <input className="di-input" type="number" step="0.01" placeholder="Ex: 2.5" value={form.rate} onChange={e => setForm(f => ({ ...f, rate: e.target.value }))} />
@@ -160,20 +161,27 @@ export default function DualPage() {
               <input className="di-input" type="date" value={form.expiry} onChange={e => setForm(f => ({ ...f, expiry: e.target.value }))} />
             </div>
             {ivCache[form.asset] && (
-              <div style={{ background: 'var(--surface2)', borderRadius: 8, padding: '10px 12px', fontSize: 11, color: 'var(--text-dim)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>IV ATM {form.asset}: <strong style={{ color: 'var(--accent)' }}>{ivCache[form.asset].iv.toFixed(2)}%</strong></span>
+              <div style={{ background:'var(--surface2)', borderRadius:8, padding:'10px 12px', fontSize:11, color:'var(--text-dim)', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                <span>IV ATM {form.asset}: <strong style={{ color:'var(--accent)' }}>{ivCache[form.asset].iv.toFixed(2)}%</strong></span>
                 {form.rate && form.days && (() => {
                   const ratio = diScore(parseFloat(form.rate), ivCache[form.asset].iv, parseInt(form.days))
                   const { label, cls } = scoreLabel(ratio)
-                  return ratio != null ? <span style={{ color: SCORE_COLORS[cls], fontWeight: 700 }}>{label} ({(ratio*100).toFixed(0)}%)</span> : null
+                  return ratio != null ? <span style={{ color:SCORE_COLORS[cls], fontWeight:700 }}>{label} ({(ratio*100).toFixed(0)}%)</span> : null
                 })()}
               </div>
             )}
             {dcaVal && form.type === 'buy-low' && form.strike && (
-              <div style={{ background: parseFloat(form.strike) < dcaVal ? 'rgba(0,229,160,.08)' : 'rgba(255,77,109,.08)', borderRadius: 8, padding: '8px 12px', fontSize: 11 }}>
+              <div style={{ background: parseFloat(form.strike) < dcaVal ? 'rgba(0,229,160,.08)' : 'rgba(255,77,109,.08)', borderRadius:8, padding:'8px 12px', fontSize:11 }}>
                 {parseFloat(form.strike) < dcaVal
-                  ? <span style={{ color: 'var(--call)' }}>✓ Strike sous DCA ({fmtUSD(dcaVal)}) — règle respectée</span>
-                  : <span style={{ color: 'var(--put)' }}>⚠ Strike au-dessus du DCA — risque d'achat trop cher</span>}
+                  ? <span style={{ color:'var(--call)' }}>✓ Strike sous DCA ({fmtUSD(dcaVal)}) — règle respectée</span>
+                  : <span style={{ color:'var(--put)' }}>⚠ Strike au-dessus du DCA — risque d'achat trop cher</span>}
+              </div>
+            )}
+            {dcaVal && form.type === 'sell-high' && form.strike && (
+              <div style={{ background: parseFloat(form.strike) > dcaVal ? 'rgba(0,229,160,.08)' : 'rgba(255,77,109,.08)', borderRadius:8, padding:'8px 12px', fontSize:11 }}>
+                {parseFloat(form.strike) > dcaVal
+                  ? <span style={{ color:'var(--call)' }}>✓ Strike au-dessus du DCA ({fmtUSD(dcaVal)}) — plus-value garantie si exercé</span>
+                  : <span style={{ color:'var(--put)' }}>⚠ Strike sous le DCA — vente à perte si exercé</span>}
               </div>
             )}
             <button className="di-add-btn" onClick={addOffer}>Ajouter le contrat</button>
@@ -181,10 +189,11 @@ export default function DualPage() {
         </div>
       )}
 
+      {/* ── CONTRATS ── */}
       {activeTab === 'positions' && (
         <div className="fade-in">
           {offers.length === 0 ? (
-            <div className="empty-state"><div className="empty-icon">◇</div><h3>Aucun contrat</h3><p>Ajoutez vos contrats dans l'onglet + Ajouter</p></div>
+            <div className="empty-state"><div className="empty-icon">◇</div><h3>Aucun contrat</h3><p>Ajoutez vos contrats dans + Ajouter</p></div>
           ) : (
             <>
               <div className="stats-grid">
@@ -204,7 +213,7 @@ export default function DualPage() {
                   <div key={o.id} className="card fade-in">
                     <div className="card-header">
                       <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                        <span style={{ color: o.asset==='BTC'?'#f7931a':'#627eea', fontFamily:'var(--sans)', fontWeight:800 }}>{o.asset}</span>
+                        <span style={{ color:o.asset==='BTC'?'#f7931a':'#627eea', fontFamily:'var(--sans)', fontWeight:800 }}>{o.asset}</span>
                         <span className={`di-badge ${o.type}`}>{o.type==='buy-low'?'Buy Low':'Sell High'}</span>
                       </div>
                       <div style={{ display:'flex', alignItems:'center', gap:8 }}>
@@ -239,6 +248,7 @@ export default function DualPage() {
         </div>
       )}
 
+      {/* ── P&L ── */}
       {activeTab === 'analysis' && (
         <div className="fade-in">
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
@@ -248,12 +258,16 @@ export default function DualPage() {
               Spot
             </button>
           </div>
-          {offers.length===0 ? <div className="empty-state"><div className="empty-icon">◇</div><h3>Aucun contrat</h3></div>
-          : offers.map(o => {
-            const spot = spots[o.asset]??null
-            const pnlData = spot ? calcPnL(o, spot) : null
-            const distPct = spot ? (spot-o.strike)/o.strike*100 : null
-            const isNear = distPct!=null && Math.abs(distPct)<3
+
+          {offers.length === 0 ? (
+            <div className="empty-state"><div className="empty-icon">◇</div><h3>Aucun contrat</h3></div>
+          ) : offers.map(o => {
+            const spot    = spots[o.asset] ?? null
+            const pnlData = calcPnL(o, spot, dcaVal)
+            const cd      = countdown(o.expiry)
+            const distPct = pnlData?.distPct
+            const isNear  = distPct != null && Math.abs(distPct) < 3
+
             return (
               <div key={o.id} className="card fade-in" style={isNear?{borderColor:'rgba(255,77,109,.4)'}:{}}>
                 <div className="card-header">
@@ -262,30 +276,80 @@ export default function DualPage() {
                     <span className={`di-badge ${o.type}`}>{o.type==='buy-low'?'Buy Low':'Sell High'}</span>
                     {isNear && <span style={{ fontSize:9, background:'rgba(255,77,109,.2)', color:'var(--put)', padding:'1px 5px', borderRadius:3, fontWeight:800 }}>! PROCHE</span>}
                   </div>
-                  <span style={{ fontSize:10, color:'var(--text-muted)' }}>⏳ {countdown(o.expiry)}</span>
+                  <span style={{ fontSize:10, color:'var(--text-muted)' }}>⏳ {cd}</span>
                 </div>
+
                 <div style={{ padding:'12px 16px', display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
                   <div><div className="stat-label">Strike</div><div style={{ fontFamily:'var(--sans)', fontWeight:800, fontSize:14 }}>{fmtStrike(o.strike)}</div></div>
-                  <div><div className="stat-label">Distance strike</div>
-                    {distPct!=null ? <div style={{ fontWeight:700, color:Math.abs(distPct)<2?'var(--put)':Math.abs(distPct)<5?'var(--accent2)':'var(--call)' }}>{distPct>0?'▲':'▼'} {Math.abs(distPct).toFixed(2)}%</div>
-                    : <div style={{ color:'var(--text-muted)' }}>—</div>}
+                  <div>
+                    <div className="stat-label">Distance strike</div>
+                    {distPct != null
+                      ? <div style={{ fontWeight:700, color:Math.abs(distPct)<2?'var(--put)':Math.abs(distPct)<8?'var(--accent2)':'var(--call)' }}>
+                          {distPct > 0 ? '▲' : '▼'} {Math.abs(distPct).toFixed(2)}%
+                        </div>
+                      : <div style={{ color:'var(--text-muted)' }}>—</div>}
                   </div>
-                  <div><div className="stat-label">Prime</div><div style={{ color:'var(--call)' }}>{pnlData?'+'+fmtUSD(pnlData.prime):'—'}</div></div>
-                  <div><div className="stat-label">Break-even</div><div style={{ color:'var(--atm)', fontWeight:700, fontSize:12 }}>{pnlData?fmtUSD(pnlData.breakEven):'—'}</div></div>
-                  {pnlData && (
-                    <div style={{ gridColumn:'span 2', background:'var(--surface2)', borderRadius:8, padding:'10px 12px' }}>
-                      <div className="stat-label" style={{ marginBottom:6 }}>Si exercé → {pnlData.converted}</div>
-                      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                        <span style={{ color:pnlData.pnl>=0?'var(--call)':'var(--put)', fontFamily:'var(--sans)', fontWeight:800, fontSize:16 }}>
-                          {pnlData.pnl>=0?'+':''}{fmtUSD(pnlData.pnl)}
-                        </span>
-                        <span style={{ color:pnlData.pnlPct>=0?'var(--call)':'var(--put)', fontSize:12 }}>
-                          {pnlData.pnlPct>=0?'+':''}{pnlData.pnlPct.toFixed(2)}%
-                        </span>
-                      </div>
-                    </div>
-                  )}
+                  <div><div className="stat-label">Prime encaissée</div><div style={{ color:'var(--call)' }}>{pnlData ? '+'+fmtUSD(pnlData.prime) : '—'}</div></div>
+                  <div>
+                    <div className="stat-label">Statut actuel</div>
+                    {pnlData?.willBeExercised != null
+                      ? <div style={{ fontSize:12, fontWeight:700, color: pnlData.willBeExercised ? 'var(--put)' : 'var(--call)' }}>
+                          {pnlData.willBeExercised ? '⚡ Sera exercé' : '✓ Non exercé'}
+                        </div>
+                      : <div style={{ color:'var(--text-muted)' }}>—</div>}
+                  </div>
                 </div>
+
+                {/* PnL si exercé vs DCA */}
+                {pnlData?.pnlIfExercised != null && (
+                  <div style={{ margin:'0 16px 12px', background:'var(--surface2)', borderRadius:8, padding:'12px' }}>
+                    <div className="stat-label" style={{ marginBottom:8 }}>
+                      {o.type === 'sell-high'
+                        ? `PnL si exercé (vs DCA ${dcaVal ? fmtUSD(dcaVal) : 'spot'})`
+                        : `PnL si exercé (vs DCA ${dcaVal ? fmtUSD(dcaVal) : 'spot'})`}
+                    </div>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                      <span style={{ color:pnlData.pnlIfExercised>=0?'var(--call)':'var(--put)', fontFamily:'var(--sans)', fontWeight:800, fontSize:16 }}>
+                        {pnlData.pnlIfExercised>=0?'+':''}{fmtUSD(pnlData.pnlIfExercised)}
+                      </span>
+                      <span style={{ color:pnlData.pnlPctIfExercised>=0?'var(--call)':'var(--put)', fontSize:12 }}>
+                        {pnlData.pnlPctIfExercised>=0?'+':''}{pnlData.pnlPctIfExercised?.toFixed(2)}%
+                      </span>
+                    </div>
+                    {o.type === 'sell-high' && dcaVal && (
+                      <div style={{ fontSize:10, color:'var(--text-muted)', marginTop:6 }}>
+                        ({fmtUSD(o.strike)} − {fmtUSD(dcaVal)}) × {pnlData.btcAmount?.toFixed(6)} BTC + prime
+                      </div>
+                    )}
+                    {o.type === 'buy-low' && dcaVal && (
+                      <div style={{ fontSize:10, color:'var(--text-muted)', marginTop:6 }}>
+                        ({fmtUSD(dcaVal)} − {fmtUSD(o.strike)}) × {pnlData.btcIfExercised?.toFixed(6)} BTC + prime
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Manque à gagner scénarios */}
+                {pnlData?.scenarios?.length > 0 && (
+                  <div style={{ margin:'0 16px 12px' }}>
+                    <div className="stat-label" style={{ marginBottom:8 }}>
+                      {o.type === 'sell-high' ? 'Manque à gagner si BTC monte après expiry' : 'Manque à gagner si BTC chute après expiry'}
+                    </div>
+                    <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
+                      {pnlData.scenarios.map(s => (
+                        <div key={s.label} style={{ display:'flex', justifyContent:'space-between', fontSize:11, padding:'6px 10px', background:'rgba(255,255,255,.03)', borderRadius:6 }}>
+                          <span style={{ color:'var(--text-muted)' }}>{s.label} ({fmtUSD(s.price)})</span>
+                          <span style={{ color:'var(--accent2)', fontWeight:700 }}>−{fmtUSD(s.manque)}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ fontSize:10, color:'var(--text-muted)', marginTop:6 }}>
+                      {o.type === 'sell-high'
+                        ? 'Différence entre prix marché et strike si BTC dépasse le strike'
+                        : 'Différence entre strike et prix marché si BTC chute sous le strike'}
+                    </div>
+                  </div>
+                )}
               </div>
             )
           })}
