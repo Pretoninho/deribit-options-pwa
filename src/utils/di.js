@@ -65,7 +65,7 @@ export function scoreLabel(ratio) {
 
 export function calcPnL(offer, spotNow, dca) {
   const days  = offer.days
-  const prime = calcPremiumUSD(offer.rate, days, offer.amount) ?? 0
+  const prime = (calcPremiumNative(offer.rate, days, offer.quantity) ?? 0) * offer.strike
   const primeNative = calcPremiumNative(offer.rate, days, offer.quantity) ?? 0
   if (!offer.amount) return null
 

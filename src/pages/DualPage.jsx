@@ -61,7 +61,7 @@ export default function DualPage() {
     ? calcPremiumNative(parseFloat(form.rate), formDays, parseFloat(form.quantity))
     : null
   const previewPrimeUSD = formDays && form.rate && amountUSD
-    ? calcPremiumUSD(parseFloat(form.rate), formDays, amountUSD)
+    ? calcPremiumNative(parseFloat(form.rate), formDays, parseFloat(form.quantity)) * parseFloat(form.strike)
     : null
 
   useEffect(() => {
@@ -339,7 +339,7 @@ export default function DualPage() {
               <div className="stats-grid">
                 <div className="stat-card"><div className="stat-label">Contrats</div><div className="stat-value blue">{offers.length}</div></div>
                 <div className="stat-card"><div className="stat-label">APY moyen</div><div className="stat-value orange">{(offers.reduce((a,o)=>a+o.rate,0)/offers.length).toFixed(2)}%</div></div>
-                <div className="stat-card"><div className="stat-label">Prime totale</div><div className="stat-value green">{(() => { const t=offers.reduce((s,o)=>s+(calcPremiumUSD(o.rate,o.days,o.amount)||0),0); return t>0?'+'+fmtUSD(t):'—' })()}</div></div>
+                <div className="stat-card"><div className="stat-label">Prime totale</div><div className="stat-value green">{(() => { const t=offers.reduce((s,o)=>s+(calcPremiumNative(o.rate, o.days, o.quantity) * o.strike||0),0); return t>0?'+'+fmtUSD(t):'—' })()}</div></div>
                 <div className="stat-card"><div className="stat-label">IV moy.</div><div className="stat-value">{(() => { const ivs=offers.map(o=>o.deribitIV).filter(v=>v!=null); return ivs.length?(ivs.reduce((a,b)=>a+b,0)/ivs.length).toFixed(2)+'%':'—' })()}</div></div>
               </div>
 
@@ -358,7 +358,7 @@ export default function DualPage() {
                     </div>
                     {assetOffers.map(o => {
                       const days   = o.days || calcDays(o.subscribeDate, o.settlementDate)
-                      const prime  = calcPremiumUSD(o.rate, days, o.amount)
+                      const prime  = calcPremiumNative(o.rate, days, o.quantity) * o.strike
                       const primeN = calcPremiumNative(o.rate, days, o.quantity)
                       const mktPct = marketPremiumPct(o.deribitIV, days)
                       const ratio  = diScore(o.rate, o.deribitIV, days)
