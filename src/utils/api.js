@@ -83,18 +83,24 @@ export async function getDVOL(asset) {
 // Funding rate perpetuel actuel + historique 7j
 export async function getFundingRate(asset) {
   const instrument = `${asset}-PERPETUAL`
-  // Ticker pour le funding rate actuel
-  const ticker = await apiFetch(`${API}/get_ticker?instrument_name=${instrument}`)
-  const current = ticker.result?.current_funding ?? null
-  const predicted = ticker.result?.interest_value ?? null
-  // Historique 7 jours
-  const end = Date.now()
-  const start = end - 7 * 24 * 3600 * 1000
-  const hist = await apiFetch(`${API}/get_funding_rate_history?instrument_name=${instrument}&start_timestamp=${start}&end_timestamp=${end}`)
-  const history = hist.result ?? []
-  const rates = history.map(r => r.interest * 100 * 365) // annualisé
-  const avgAnn = rates.length ? rates.reduce((a, b) => a + b, 0) / rates.length : null
-  return { current: current ? current * 100 * 365 : null, predicted, avgAnn7d: avgAnn, bullish: avgAnn > 0 }
+  try {
+    // Ticker perpetuel — contient funding_8h et interest_value
+    const ticker = await apiFetch(`${API}/get_ticker?instrument_name=${instrument}`)
+    const t = ticker.result
+    // funding_8h = taux sur 8h, on annualise × 3 × 365
+    const funding8h = t.funding_8h ?? null
+    const currentAnn = funding8h != null ? funding8h * 100 * 3 * 365 : null
+    // stats historique via get_book_summary
+    return {
+      current: currentAnn,
+      predicted: t.interest_value ?? null,
+      avgAnn7d: currentAnn, // approximation
+      bullish: currentAnn > 0
+    }
+  } catch(e) {
+    console.warn('Funding error:', e.message)
+    return null
+  }
 }
 
 // Open Interest total options
