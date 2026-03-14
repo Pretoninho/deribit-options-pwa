@@ -140,19 +140,19 @@ export default function ChainPage() {
     // Buy Low → put OTM → on utilise l'IV du put
     const ivBL = ivPut ?? ivCall
     const marketRateBL = isBuyLow && diDays
-      ? calcDIRateFromMarkPrice(r.put?.mark_price, spot, r.strike, diDays)
+      ? calcDIRateFromMarkPrice(r.put?.mark_price, spot, r.strike, diDays, r.put?.mark_iv, "put")
       : null
 
     // Sell High → call OTM → on utilise l'IV du call
     const ivSH = ivCall ?? ivPut
     const marketRateSH = isSellHigh && diDays
-      ? calcDIRateFromMarkPrice(r.call?.mark_price, spot, r.strike, diDays)
+      ? calcDIRateFromMarkPrice(r.call?.mark_price, spot, r.strike, diDays, r.call?.mark_iv, "call")
       : null
 
     // ATM : on calcule les deux
     const ivAtm = (ivCall != null && ivPut != null) ? (ivCall + ivPut) / 2 : (ivCall ?? ivPut)
     const marketRateATM = !isBuyLow && !isSellHigh && diDays
-      ? calcDIRateFromMarkPrice(r.put?.mark_price ?? r.call?.mark_price, spot, r.strike, diDays)
+      ? calcDIRateFromMarkPrice(r.put?.mark_price ?? r.call?.mark_price, spot, r.strike, diDays, r.put?.mark_iv ?? r.call?.mark_iv, "put")
       : null
 
     const marketRate = marketRateBL ?? marketRateSH ?? marketRateATM
