@@ -10,20 +10,14 @@ function daysUntil(ts) {
   return Math.max(0.01, (ts - Date.now()) / 86400000)
 }
 
-// Taux DI via Delta × IV × √T — plus proche de Nexo
-function calcDIRateStrike(iv, spot, strike, days, type) {
-  if (!iv || !spot || !strike || !days) return null
-  const T      = days / 365
-  const sigma  = iv / 100
-  const optType = type === 'buy-low' ? 'put' : 'call'
-  const premium = blackScholes(optType, spot, strike, T, 0, sigma)
-  if (!premium || premium <= 0) return null
-  // Prime en % du strike (base d'engagement)
-  const premiumPct = premium / strike * 100
-  // APR annualisé
+// Taux DI via mark_price Deribit — prix réel de l'option
+function calcDIRateFromMarkPrice(markPrice, spot, strike, days) {
+  if (!markPrice || !spot || !strike || !days) return null
+  // mark_price est en BTC (fraction du sous-jacent)
+  const premiumUSD = markPrice * spot
+  const premiumPct = premiumUSD / strike * 100
   return premiumPct * (365 / days)
 }
-
 export default function ChainPage() {
   const [asset, setAsset] = useState('BTC')
   const [instruments, setInstruments] = useState([])
@@ -112,7 +106,7 @@ export default function ChainPage() {
           ? (cb.mark_iv + pb.mark_iv) / 2
           : cb?.mark_iv ?? pb?.mark_iv ?? null
         // BS ATM put pour Buy Low
-        const marketRate = calcDIRateStrike(iv, spot, atmS, days, 'buy-low')
+        const marketRate = calcDIRateFromMarkPrice(null, spot, atmS, days)
         const minRate    = marketRate ? marketRate * 0.8 : null
         results.push({ ts, days, atmStrike: atmS, iv, marketRate, minRate })
       } catch(_) {}
@@ -146,19 +140,19 @@ export default function ChainPage() {
     // Buy Low → put OTM → on utilise l'IV du put
     const ivBL = ivPut ?? ivCall
     const marketRateBL = isBuyLow && diDays
-      ? calcDIRateStrike(ivBL, spot, r.strike, diDays, 'buy-low')
+      ? calcDIRateFromMarkPrice(r.put?.mark_price, spot, r.strike, diDays)
       : null
 
     // Sell High → call OTM → on utilise l'IV du call
     const ivSH = ivCall ?? ivPut
     const marketRateSH = isSellHigh && diDays
-      ? calcDIRateStrike(ivSH, spot, r.strike, diDays, 'sell-high')
+      ? calcDIRateFromMarkPrice(r.call?.mark_price, spot, r.strike, diDays)
       : null
 
     // ATM : on calcule les deux
     const ivAtm = (ivCall != null && ivPut != null) ? (ivCall + ivPut) / 2 : (ivCall ?? ivPut)
     const marketRateATM = !isBuyLow && !isSellHigh && diDays
-      ? calcDIRateStrike(ivAtm, spot, r.strike, diDays, 'buy-low')
+      ? calcDIRateFromMarkPrice(r.put?.mark_price ?? r.call?.mark_price, spot, r.strike, diDays)
       : null
 
     const marketRate = marketRateBL ?? marketRateSH ?? marketRateATM
