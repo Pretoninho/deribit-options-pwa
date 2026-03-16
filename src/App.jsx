@@ -6,6 +6,8 @@ import DualPage from './pages/DualPage.jsx'
 import TermPage from './pages/TermPage.jsx'
 import SignalPage from './pages/SignalPage.jsx'
 import OptionsPage from './pages/OptionsPage.jsx'
+import OptionsPage from './pages/OptionsPage.jsx'
+import PaperTradingPage from './pages/PaperTradingPage.jsx'
 import './App.css'
 
 const DI_TABS = [
@@ -38,42 +40,7 @@ const DI_TABS = [
   )},
 ]
 
-function OptionsPlaceholder({ onBack }) {
-  return (
-    <div style={{ minHeight:'100vh', display:'flex', flexDirection:'column' }}>
-      <div style={{ padding:'20px 24px', display:'flex', alignItems:'center', gap:12, borderBottom:'1px solid var(--border)' }}>
-        <button onClick={onBack} style={{ background:'none', border:'none', cursor:'pointer', color:'var(--text-muted)', padding:4 }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
-        </button>
-        <div style={{ fontFamily:'var(--sans)', fontWeight:800, fontSize:16, color:'var(--text)' }}>
-          Option <span style={{ color:'var(--atm)' }}>Analyzer</span>
-        </div>
-      </div>
-      <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:32, textAlign:'center' }}>
-        <div style={{ width:80, height:80, borderRadius:20, background:'rgba(255,215,0,.1)', border:'1px solid rgba(255,215,0,.2)', display:'flex', alignItems:'center', justifyContent:'center', marginBottom:24 }}>
-          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--atm)" strokeWidth="1.5">
-            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-          </svg>
-        </div>
-        <div style={{ fontFamily:'var(--sans)', fontWeight:800, fontSize:22, color:'var(--text)', marginBottom:12 }}>En développement</div>
-        <div style={{ fontSize:13, color:'var(--text-muted)', lineHeight:1.8, maxWidth:280 }}>
-          L'outil d'analyse d'options avancé arrive bientôt.<br/>
-          Surface de volatilité · Greeks · Stratégies · Pricing
-        </div>
-        <div style={{ marginTop:32, display:'flex', flexDirection:'column', gap:10, width:'100%', maxWidth:280 }}>
-          {['Surface de volatilité 3D','Dashboard Greeks','Stratégies (Spreads, Straddles)','Pricing multicritères','Backtesting'].map(f => (
-            <div key={f} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', borderRadius:10, background:'var(--surface)', border:'1px solid var(--border)' }}>
-              <div style={{ width:6, height:6, borderRadius:'50%', background:'var(--atm)', opacity:.5 }}/>
-              <span style={{ fontSize:12, color:'var(--text-muted)' }}>{f}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
+
 
 export default function App() {
   const [view, setView] = useState('home')
@@ -97,7 +64,12 @@ export default function App() {
 
   // OPTION ANALYZER (placeholder)
   if (view === 'options') {
-    return <OptionsPage onBack={() => setView('home')} />
+    return <OptionsPage onBack={() => setView('home')} onNavigate={setView} />
+  }
+
+  // PAPER TRADING
+  if (view === 'paper') {
+    return <PaperTradingPage onBack={() => setView('home')} />
   }
 
   // DI SUITE

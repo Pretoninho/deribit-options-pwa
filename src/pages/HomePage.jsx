@@ -156,6 +156,34 @@ export default function HomePage({ onNavigate }) {
               ))}
             </div>
           </button>
+
+          {/* Paper Trading */}
+          <button onClick={() => onNavigate('paper')} style={{
+            background:'linear-gradient(135deg, rgba(34,197,94,.08) 0%, rgba(22,163,74,.05) 100%)',
+            border:'1px solid rgba(34,197,94,.2)',
+            borderRadius:16, padding:'20px', cursor:'pointer', textAlign:'left',
+            transition:'all .2s', width:'100%'
+          }}>
+            <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10 }}>
+              <div style={{ width:40, height:40, borderRadius:10, background:'rgba(34,197,94,.12)', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--call)" strokeWidth="2">
+                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+                </svg>
+              </div>
+              <div>
+                <div style={{ fontFamily:'var(--sans)', fontWeight:800, fontSize:16, color:'var(--text)' }}>Paper Trading</div>
+                <div style={{ fontSize:11, color:'var(--call)', fontWeight:600 }}>Simulation</div>
+              </div>
+            </div>
+            <div style={{ fontSize:12, color:'var(--text-muted)', lineHeight:1.7 }}>
+              Testez les stratégies · Suivez vos P&L · Trade sans risque
+            </div>
+            <div style={{ marginTop:12, display:'flex', gap:6 }}>
+              {['Positions','P&L','Historique'].map(t => (
+                <span key={t} style={{ fontSize:10, padding:'2px 8px', borderRadius:20, background:'rgba(34,197,94,.1)', color:'var(--call)', border:'1px solid rgba(34,197,94,.2)' }}>{t}</span>
+              ))}
+            </div>
+          </button>
         </div>
       </div>
 
