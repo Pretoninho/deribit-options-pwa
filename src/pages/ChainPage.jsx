@@ -38,7 +38,39 @@ function getRating(ratio) {
   return {label:'Faible',color:'var(--put)',detail:'Sous-paie significativement'}
 }
 
-export default function ChainPage({ onNavigate }) {
+const NEXO_DISTANCE_RULES = {
+  BTC: [
+    { maxDays: 2, distance: 3000 },
+    { maxDays: 3, distance: 4000 },
+    { maxDays: 4, distance: 5000 },
+    { maxDays: 14, distance: 7000 },
+    { maxDays: 21, distance: 7000 },
+    { maxDays: 90, distance: 15000 },
+    { maxDays: 180, distance: 17000 },
+    { maxDays: 270, distance: 22000 },
+    { maxDays: 365, distance: 25000 },
+  ],
+  ETH: [
+    { maxDays: 2, distance: 200 },
+    { maxDays: 3, distance: 300 },
+    { maxDays: 4, distance: 300 },
+    { maxDays: 14, distance: 500 },
+    { maxDays: 21, distance: 600 },
+    { maxDays: 90, distance: 1000 },
+    { maxDays: 180, distance: 1000 },
+    { maxDays: 270, distance: 1200 },
+    { maxDays: 365, distance: 1300 },
+  ],
+}
+
+function getNexoStrikeDistance(asset, days) {
+  const rules = NEXO_DISTANCE_RULES[asset]
+  if (!rules?.length || !days) return null
+  const found = rules.find((r) => days <= r.maxDays)
+  return (found || rules[rules.length - 1]).distance
+}
+
+export default function ChainPage({ onNavigate, onSubscribe }) {
   const [asset,setAsset]=useState('BTC')
   const [instruments,setInstruments]=useState([])
   const [expiries,setExpiries]=useState([])
@@ -153,14 +185,17 @@ export default function ChainPage({ onNavigate }) {
   const smileRows=rows.map(r=>({strike:r.strike,iv:r.call?.mark_iv??r.put?.mark_iv??null,distPct:spot?(r.strike-spot)/spot*100:null})).filter(r=>r.iv!=null)
   const maxIV=smileRows.length?Math.max(...smileRows.map(r=>r.iv)):1
   const chainDays=selExpiry?daysUntil(selExpiry):null
+  const nexoDistance = getNexoStrikeDistance(asset, chainDays)
   const chainRows=rows
     .map(r=>{
       const distPct=spot?((r.strike-spot)/spot)*100:null
+      const strikeDistance = spot != null ? Math.abs(r.strike - spot) : null
       const interest=calcDualInterestPct(r,chainSide,spot,chainDays)
       const sideBook=chainSide==='buy-low'?r.put:r.call
       const settle=selExpiry?settlesIn(selExpiry):null
       return {
         strike:r.strike,
+        strikeDistance,
         distPct,
         interest,
         settle,
@@ -169,9 +204,10 @@ export default function ChainPage({ onNavigate }) {
       }
     })
     .filter(r=>{
-      if(!spot||r.interest==null||r.distPct==null) return false
-      if(chainSide==='buy-low') return r.distPct < -0.2 && r.distPct > -20
-      return r.distPct > 0.2 && r.distPct < 20
+      if(!spot||r.interest==null||r.distPct==null||r.strikeDistance==null) return false
+      if(nexoDistance!=null && r.strikeDistance > nexoDistance) return false
+      if(chainSide==='buy-low') return r.distPct < -0.2
+      return r.distPct > 0.2
     })
     .sort((a,b)=>a.strike-b.strike)
     .slice(0,14)
@@ -283,6 +319,9 @@ export default function ChainPage({ onNavigate }) {
             <div style={{ fontSize:11, color:'var(--text)' }}>
               Current price is: <span style={{ color:'var(--accent)', fontWeight:700 }}>${spot?.toLocaleString('en-US',{maximumFractionDigits:2}) ?? '—'}</span>
             </div>
+            <div style={{ fontSize:10, color:'var(--text-muted)', marginTop:4 }}>
+              Filtre Nexo: distance max ±{nexoDistance?.toLocaleString('en-US') ?? '—'} USD ({chainDays ? `${chainDays.toFixed(1)}j` : '—'})
+            </div>
           </div>
 
           {chainRows.length>0&&(
@@ -310,7 +349,25 @@ export default function ChainPage({ onNavigate }) {
                         <div style={{fontSize:9,color:'var(--text-muted)',marginTop:3}}>IV {r.iv?.toFixed(1) ?? '—'}%</div>
                       </div>
                       <button
-                        onClick={()=>{ if(onNavigate) onNavigate('paper'); else { setActiveTab('di'); setDiExpiry(selExpiry) } }}
+                        onClick={()=>{
+                          const payload = {
+                            asset,
+                            side: chainSide,
+                            strike: r.strike,
+                            expiryTs: selExpiry,
+                            expiryLabel: r.settle?.date,
+                            settleIn: r.settle?.display,
+                            apr: r.interest,
+                            days: chainDays,
+                            spotEntry: spot,
+                            iv: r.iv,
+                            distanceUsd: r.strikeDistance,
+                            distPct: r.distPct,
+                          }
+                          if(onSubscribe) onSubscribe(payload)
+                          else if(onNavigate) onNavigate('paper')
+                          else { setActiveTab('di'); setDiExpiry(selExpiry) }
+                        }}
                         style={{
                           background:'var(--accent)',color:'#001016',border:'none',borderRadius:8,
                           fontFamily:'var(--sans)',fontWeight:700,fontSize:12,padding:'10px 12px',cursor:'pointer'

@@ -1,180 +1,451 @@
-import { useState, useEffect } from 'react'
-import { getSpot, getOrderBook } from '../utils/api.js'
+import { useEffect, useMemo, useState } from 'react'
+import { getSpot } from '../utils/api.js'
 
-const LS_PAPER_POSITIONS = 'paper_positions'
-const LS_PAPER_BALANCE = 'paper_balance'
+const LS_DI_POSITIONS = 'paper_di_positions'
+const LS_DI_BALANCES = 'paper_di_balances'
+const LS_DI_HISTORY = 'paper_di_history'
 
-function toDeribitExpiry(input) {
-  if (!input) return null
-  const clean = input.trim().toUpperCase()
-  if (/^\d{2}[A-Z]{3}\d{2}$/.test(clean)) return clean
+const MIN_LOT = { BTC: 0.01, ETH: 0.2 }
+const INITIAL_BALANCES = { USDC: 100000, BTC: 0.4, ETH: 6 }
 
-  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
-    const date = new Date(`${clean}T00:00:00Z`)
-    if (Number.isNaN(date.getTime())) return null
-    const dd = String(date.getUTCDate()).padStart(2, '0')
-    const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
-    const mmm = months[date.getUTCMonth()]
-    const yy = String(date.getUTCFullYear()).slice(-2)
-    return `${dd}${mmm}${yy}`
+function formatNum(n, max = 2) {
+  if (!Number.isFinite(n)) return '—'
+  return n.toLocaleString('en-US', { maximumFractionDigits: max, minimumFractionDigits: 0 })
+}
+
+function formatDate(ts) {
+  if (!ts) return '—'
+  return new Date(ts).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+function formatTime(ts) {
+  if (!ts) return '—'
+  return new Date(ts).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+}
+
+function calcDaysToExpiry(expiryTs) {
+  if (!expiryTs) return null
+  return Math.max(0.01, (expiryTs - Date.now()) / 86400000)
+}
+
+function calcPeriodRate(apr, days) {
+  if (!Number.isFinite(apr) || !Number.isFinite(days) || days <= 0) return 0
+  return (apr / 100) * (days / 365)
+}
+
+function buildTradePreview(form) {
+  const strike = Number(form.strike)
+  const apr = Number(form.apr)
+  const qtyAsset = Number(form.quantityAsset)
+  const days = Number(form.days)
+  const minLot = MIN_LOT[form.asset] ?? 0.01
+
+  if (!Number.isFinite(strike) || strike <= 0 || !Number.isFinite(apr) || apr <= 0 || !Number.isFinite(days) || days <= 0) {
+    return null
+  }
+  if (!Number.isFinite(qtyAsset) || qtyAsset < minLot) {
+    return { invalidLot: true, minLot }
   }
 
-  return null
-}
+  const periodRate = calcPeriodRate(apr, days)
 
-function buildInstrumentName(asset, expiryInput, strike, optionType) {
-  const expiry = toDeribitExpiry(expiryInput)
-  const strikeNum = Number(strike)
-  if (!expiry || !Number.isFinite(strikeNum) || strikeNum <= 0) return null
-  const suffix = optionType === 'put' ? 'P' : 'C'
-  return `${asset}-${expiry}-${Math.round(strikeNum)}-${suffix}`
-}
-
-function calcPayoffUSD(side, optionType, strike, premiumUsd, quantity, spotAtExpiry) {
-  const intrinsic = optionType === 'call'
-    ? Math.max(spotAtExpiry - strike, 0)
-    : Math.max(strike - spotAtExpiry, 0)
-  const unit = side === 'buy' ? intrinsic - premiumUsd : premiumUsd - intrinsic
-  return unit * quantity
-}
-
-export default function PaperTradingPage({ onBack }) {
-  const [asset, setAsset] = useState('BTC')
-  const [positions, setPositions] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(LS_PAPER_POSITIONS) || '[]') } catch { return [] }
-  })
-  const [balance, setBalance] = useState(() => parseFloat(localStorage.getItem(LS_PAPER_BALANCE) || '10000'))
-  const [spot, setSpot] = useState(null)
-  const [showNewTrade, setShowNewTrade] = useState(false)
-  const [newTrade, setNewTrade] = useState({ type: 'buy', optionType: 'call', strike: '', expiry: '', quantity: 1 })
-  const [pnl, setPnl] = useState(0)
-  const [quote, setQuote] = useState(null)
-  const [quoteLoading, setQuoteLoading] = useState(false)
-  const [quoteError, setQuoteError] = useState(null)
-
-  useEffect(() => {
-    const loadSpot = async () => {
-      const s = await getSpot(asset).catch(() => null)
-      setSpot(s)
+  if (form.side === 'sell-high') {
+    const collateralAsset = qtyAsset
+    const premiumAsset = collateralAsset * periodRate
+    return {
+      side: form.side,
+      collateralAsset,
+      premiumAsset,
+      collateralUsdc: 0,
+      premiumUsdc: 0,
+      periodRate,
+      days,
+      strike,
+      apr,
+      qtyAsset,
+      minLot,
     }
-    loadSpot()
-  }, [asset])
+  }
+
+  const collateralUsdc = strike * qtyAsset
+  const premiumUsdc = collateralUsdc * periodRate
+  return {
+    side: form.side,
+    collateralAsset: 0,
+    premiumAsset: 0,
+    collateralUsdc,
+    premiumUsdc,
+    periodRate,
+    days,
+    strike,
+    apr,
+    qtyAsset,
+    minLot,
+  }
+}
+
+function calcPositionMarkValue(position, spots) {
+  const spot = spots[position.asset]
+  if (!spot) return 0
+  const elapsedDays = Math.max(0, (Date.now() - position.entryTs) / 86400000)
+  const progress = Math.min(1, elapsedDays / Math.max(position.days, 0.01))
+
+  if (position.side === 'sell-high') {
+    const accruedPremiumAsset = position.premiumAsset * progress
+    return (position.collateralAsset + accruedPremiumAsset) * spot
+  }
+
+  const accruedPremiumUsdc = position.premiumUsdc * progress
+  return position.collateralUsdc + accruedPremiumUsdc
+}
+
+function calcWalletEquity(balances, positions, spots) {
+  const btc = balances.BTC * (spots.BTC ?? 0)
+  const eth = balances.ETH * (spots.ETH ?? 0)
+  const liquid = balances.USDC + btc + eth
+  const locked = positions.reduce((acc, p) => acc + calcPositionMarkValue(p, spots), 0)
+  return liquid + locked
+}
+
+function PerformanceChart({ points }) {
+  const [hoverIndex, setHoverIndex] = useState(null)
+
+  if (!points.length) {
+    return <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>En attente de donnees de performance...</div>
+  }
+
+  const width = 1000
+  const height = 250
+  const p = { l: 44, r: 16, t: 16, b: 36 }
+
+  const minTs = points[0].ts
+  const maxTs = points[points.length - 1].ts
+  const eqs = points.map((x) => x.equity)
+  const minEqRaw = Math.min(...eqs)
+  const maxEqRaw = Math.max(...eqs)
+  const margin = Math.max(20, (maxEqRaw - minEqRaw) * 0.18)
+  const minEq = minEqRaw - margin
+  const maxEq = maxEqRaw + margin
+
+  const mapX = (ts) => {
+    if (maxTs === minTs) return p.l
+    return p.l + ((ts - minTs) / (maxTs - minTs)) * (width - p.l - p.r)
+  }
+
+  const mapY = (eq) => {
+    if (maxEq === minEq) return height / 2
+    return p.t + ((maxEq - eq) / (maxEq - minEq)) * (height - p.t - p.b)
+  }
+
+  const line = points.map((pt) => `${mapX(pt.ts).toFixed(1)},${mapY(pt.equity).toFixed(1)}`).join(' ')
+  const area = `${p.l},${height - p.b} ${line} ${mapX(points[points.length - 1].ts)},${height - p.b}`
+
+  const activeIndex = hoverIndex == null ? points.length - 1 : hoverIndex
+  const active = points[activeIndex]
+  const activeX = mapX(active.ts)
+  const activeY = mapY(active.equity)
+
+  const onMove = (evt) => {
+    const rect = evt.currentTarget.getBoundingClientRect()
+    const x = evt.clientX - rect.left
+    const ratio = Math.max(0, Math.min(1, x / rect.width))
+    const targetTs = minTs + ratio * (maxTs - minTs)
+    let bestIdx = 0
+    let bestGap = Infinity
+    for (let i = 0; i < points.length; i += 1) {
+      const gap = Math.abs(points[i].ts - targetTs)
+      if (gap < bestGap) {
+        bestGap = gap
+        bestIdx = i
+      }
+    }
+    setHoverIndex(bestIdx)
+  }
+
+  return (
+    <div style={{ background: 'linear-gradient(180deg, rgba(0,212,255,.08), rgba(0,0,0,.05))', border: '1px solid var(--border)', borderRadius: 12, padding: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+        <div>
+          <div style={{ fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 14, color: 'var(--text)' }}>Performance du compte DI</div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Equity liquide + collateraux + primes accrues</div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 14, color: 'var(--accent)' }}>${formatNum(active.equity, 2)}</div>
+          <div style={{ fontSize: 10, color: active.pnl >= 0 ? 'var(--call)' : 'var(--put)' }}>{active.pnl >= 0 ? '+' : ''}{formatNum(active.pnl, 2)} USD</div>
+        </div>
+      </div>
+
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        style={{ width: '100%', height: 220, display: 'block', borderRadius: 8, background: 'rgba(5,12,20,.55)' }}
+        onMouseMove={onMove}
+        onMouseLeave={() => setHoverIndex(null)}
+      >
+        <defs>
+          <linearGradient id="eqLine" x1="0" x2="1" y1="0" y2="0">
+            <stop offset="0%" stopColor="var(--call)" />
+            <stop offset="100%" stopColor="var(--accent)" />
+          </linearGradient>
+          <linearGradient id="eqFill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="rgba(0,229,160,.24)" />
+            <stop offset="100%" stopColor="rgba(0,229,160,.02)" />
+          </linearGradient>
+        </defs>
+
+        <line x1={p.l} y1={mapY(points[0].equity - points[0].pnl)} x2={width - p.r} y2={mapY(points[0].equity - points[0].pnl)} stroke="rgba(255,255,255,.16)" strokeDasharray="4 4" />
+        <polyline fill="url(#eqFill)" stroke="none" points={area} />
+        <polyline fill="none" stroke="url(#eqLine)" strokeWidth="3" points={line} />
+
+        <line x1={activeX} y1={p.t} x2={activeX} y2={height - p.b} stroke="rgba(0,212,255,.4)" strokeDasharray="3 4" />
+        <circle cx={activeX} cy={activeY} r="5" fill="var(--accent)" stroke="white" strokeWidth="1.5" />
+
+        <text x={p.l} y={height - 10} fill="var(--text-muted)" fontSize="11">{formatTime(points[0].ts)}</text>
+        <text x={width - p.r} y={height - 10} fill="var(--text-muted)" fontSize="11" textAnchor="end">{formatTime(points[points.length - 1].ts)}</text>
+        <text x={p.l} y={13} fill="var(--text-muted)" fontSize="11">max {formatNum(maxEqRaw, 0)}</text>
+        <text x={p.l} y={height - p.b + 12} fill="var(--text-muted)" fontSize="11">min {formatNum(minEqRaw, 0)}</text>
+      </svg>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 10, color: 'var(--text-muted)' }}>
+        <span>{formatDate(active.ts)} {formatTime(active.ts)}</span>
+        <span>{active.openPositions} positions ouvertes</span>
+      </div>
+    </div>
+  )
+}
+
+export default function PaperTradingPage({ onBack, prefillTrade }) {
+  const [asset, setAsset] = useState('BTC')
+  const [spots, setSpots] = useState({ BTC: null, ETH: null })
+  const [balances, setBalances] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(LS_DI_BALANCES) || JSON.stringify(INITIAL_BALANCES))
+    } catch {
+      return INITIAL_BALANCES
+    }
+  })
+  const [positions, setPositions] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(LS_DI_POSITIONS) || '[]')
+    } catch {
+      return []
+    }
+  })
+  const [history, setHistory] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(LS_DI_HISTORY) || '[]')
+    } catch {
+      return []
+    }
+  })
+
+  const [showTradeModal, setShowTradeModal] = useState(false)
+  const [tradeForm, setTradeForm] = useState({
+    asset: 'BTC',
+    side: 'buy-low',
+    strike: '',
+    expiryTs: null,
+    apr: '',
+    quantityAsset: MIN_LOT.BTC,
+    days: '',
+  })
+
+  const loadSpots = async () => {
+    const [btc, eth] = await Promise.all([
+      getSpot('BTC').catch(() => null),
+      getSpot('ETH').catch(() => null),
+    ])
+    setSpots({ BTC: btc, ETH: eth })
+  }
 
   useEffect(() => {
-    localStorage.setItem(LS_PAPER_POSITIONS, JSON.stringify(positions))
+    loadSpots()
+    const id = setInterval(loadSpots, 20000)
+    return () => clearInterval(id)
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem(LS_DI_BALANCES, JSON.stringify(balances))
+  }, [balances])
+
+  useEffect(() => {
+    localStorage.setItem(LS_DI_POSITIONS, JSON.stringify(positions))
   }, [positions])
 
   useEffect(() => {
-    localStorage.setItem(LS_PAPER_BALANCE, balance.toString())
-  }, [balance])
+    localStorage.setItem(LS_DI_HISTORY, JSON.stringify(history))
+  }, [history])
+
+  const currentSpot = spots[asset]
 
   useEffect(() => {
-    if (!showNewTrade) return
-    if (!spot || !newTrade.strike || !newTrade.expiry) {
-      setQuote(null)
-      setQuoteError(null)
-      return
-    }
+    if (!prefillTrade) return
+    const prefillAsset = prefillTrade.asset || 'BTC'
+    const minLot = MIN_LOT[prefillAsset] ?? 0.01
 
-    const instrument = buildInstrumentName(asset, newTrade.expiry, newTrade.strike, newTrade.optionType)
-    if (!instrument) {
-      setQuote(null)
-      setQuoteError('Format expiry invalide. Utilise YYYY-MM-DD ou 28MAR26.')
-      return
-    }
+    setAsset(prefillAsset)
+    setTradeForm({
+      asset: prefillAsset,
+      side: prefillTrade.side === 'sell-high' ? 'sell-high' : 'buy-low',
+      strike: prefillTrade.strike ? String(prefillTrade.strike) : '',
+      expiryTs: prefillTrade.expiryTs ?? null,
+      apr: prefillTrade.apr ? Number(prefillTrade.apr).toFixed(2) : '',
+      quantityAsset: minLot,
+      days: prefillTrade.days ? Number(prefillTrade.days).toFixed(2) : (prefillTrade.expiryTs ? calcDaysToExpiry(prefillTrade.expiryTs).toFixed(2) : ''),
+    })
+    setShowTradeModal(true)
+  }, [prefillTrade])
 
-    let cancelled = false
-    const loadQuote = async () => {
-      setQuoteLoading(true)
-      setQuoteError(null)
-      try {
-        const ob = await getOrderBook(instrument).catch(() => null)
-        if (!ob?.mark_price) {
-          if (!cancelled) {
-            setQuote(null)
-            setQuoteError('Instrument introuvable ou mark price indisponible.')
-          }
-          return
-        }
+  const tradePreview = useMemo(() => {
+    const days = Number(tradeForm.days) || calcDaysToExpiry(Number(tradeForm.expiryTs))
+    return buildTradePreview({
+      ...tradeForm,
+      days,
+    })
+  }, [tradeForm])
 
-        const premiumUsd = ob.mark_price * spot
-        if (!cancelled) {
-          setQuote({
-            instrument,
-            markPrice: ob.mark_price,
-            premiumUsd,
-          })
-        }
-      } finally {
-        if (!cancelled) setQuoteLoading(false)
+  const lockedSummary = useMemo(() => {
+    return positions.reduce((acc, pos) => {
+      if (pos.side === 'sell-high') {
+        acc[pos.asset] += pos.collateralAsset
+      } else {
+        acc.USDC += pos.collateralUsdc
       }
-    }
-    loadQuote()
+      return acc
+    }, { USDC: 0, BTC: 0, ETH: 0 })
+  }, [positions])
 
-    return () => { cancelled = true }
-  }, [showNewTrade, asset, newTrade.expiry, newTrade.optionType, newTrade.strike, spot])
+  const equity = useMemo(() => calcWalletEquity(balances, positions, spots), [balances, positions, spots])
+  const baselineEquity = history[0]?.equity ?? equity
+  const pnl = equity - baselineEquity
 
-  // Calculer P&L total
   useEffect(() => {
-    const calcPnl = async () => {
-      let totalPnl = 0
-      for (const pos of positions) {
-        if (pos.asset !== asset) continue
-        const ob = await getOrderBook(pos.instrument).catch(() => null)
-        if (ob?.mark_price) {
-          const currentPrice = ob.mark_price
-          const entryPrice = pos.entryPrice
-          const qty = pos.quantity * (pos.side === 'buy' ? 1 : -1)
-          totalPnl += (currentPrice - entryPrice) * qty // en USD
-        }
+    if (!Number.isFinite(equity) || equity <= 0) return
+    const now = Date.now()
+    setHistory((prev) => {
+      if (!prev.length) {
+        return [{ ts: now, equity, pnl: 0, openPositions: positions.length }]
       }
-      setPnl(totalPnl)
-    }
-    calcPnl()
-  }, [positions, asset, spot])
+      const last = prev[prev.length - 1]
+      const point = { ts: now, equity, pnl: equity - prev[0].equity, openPositions: positions.length }
+      if (now - last.ts < 25000) {
+        const copy = prev.slice(0, -1)
+        copy.push(point)
+        return copy
+      }
+      return [...prev, point].slice(-180)
+    })
+  }, [equity, positions.length])
 
-  const executeTrade = async () => {
-    if (!newTrade.strike || !newTrade.expiry) return
-    const instrument = quote?.instrument ?? buildInstrumentName(asset, newTrade.expiry, newTrade.strike, newTrade.optionType)
-    if (!instrument) return alert('Format d\'échéance invalide')
-    const ob = await getOrderBook(instrument).catch(() => null)
-    if (!ob?.mark_price) return alert('Prix non disponible pour cet instrument')
-
-    const premiumUsd = ob.mark_price * (spot ?? 0)
-    const cost = premiumUsd * newTrade.quantity * (newTrade.type === 'buy' ? 1 : -1)
-
-    if (newTrade.type === 'buy' && cost > balance) return alert('Solde insuffisant')
-
-    const position = {
-      id: Date.now(),
-      asset,
-      instrument,
-      side: newTrade.type,
-      optionType: newTrade.optionType,
-      strike: parseFloat(newTrade.strike),
-      expiry: newTrade.expiry,
-      quantity: newTrade.quantity,
-      entryPrice: premiumUsd,
-      entryTime: new Date().toISOString(),
-      spotAtEntry: spot
-    }
-
-    setPositions(prev => [...prev, position])
-    setBalance(prev => prev - cost)
-    setShowNewTrade(false)
-    setNewTrade({ type: 'buy', optionType: 'call', strike: '', expiry: '', quantity: 1 })
-    setQuote(null)
-    setQuoteError(null)
+  const resetSimulation = () => {
+    if (!window.confirm('Reinitialiser le compte de simulation DI ?')) return
+    setBalances(INITIAL_BALANCES)
+    setPositions([])
+    setHistory([])
   }
 
-  const closePosition = (id) => {
-    const pos = positions.find(p => p.id === id)
+  const openNewTrade = () => {
+    const baseAsset = asset
+    setTradeForm((prev) => ({
+      ...prev,
+      asset: baseAsset,
+      side: prev.side || 'buy-low',
+      quantityAsset: MIN_LOT[baseAsset] ?? 0.01,
+      days: prev.days || '7',
+    }))
+    setShowTradeModal(true)
+  }
+
+  const executeTrade = () => {
+    const strike = Number(tradeForm.strike)
+    const apr = Number(tradeForm.apr)
+    const days = Number(tradeForm.days) || calcDaysToExpiry(Number(tradeForm.expiryTs))
+    const qtyAsset = Number(tradeForm.quantityAsset)
+
+    if (!Number.isFinite(strike) || strike <= 0) return alert('Strike invalide')
+    if (!Number.isFinite(apr) || apr <= 0) return alert('APR invalide')
+    if (!Number.isFinite(days) || days <= 0) return alert('Duree invalide')
+    if (!Number.isFinite(qtyAsset) || qtyAsset <= 0) return alert('Quantite invalide')
+
+    const preview = buildTradePreview({
+      ...tradeForm,
+      strike,
+      apr,
+      days,
+      quantityAsset: qtyAsset,
+    })
+
+    if (!preview || preview.invalidLot) {
+      return alert(`Lot minimum ${tradeForm.asset}: ${preview?.minLot ?? (MIN_LOT[tradeForm.asset] ?? 0.01)}`)
+    }
+
+    if (preview.side === 'sell-high') {
+      if (balances[tradeForm.asset] < preview.collateralAsset) {
+        return alert(`Solde ${tradeForm.asset} insuffisant pour verrouiller ${preview.collateralAsset}`)
+      }
+    } else if (balances.USDC < preview.collateralUsdc) {
+      return alert(`Solde USDC insuffisant. Requis: ${preview.collateralUsdc.toFixed(2)}`)
+    }
+
+    const now = Date.now()
+    const position = {
+      id: now,
+      asset: tradeForm.asset,
+      side: preview.side,
+      strike: preview.strike,
+      apr: preview.apr,
+      days: preview.days,
+      expiryTs: Number(tradeForm.expiryTs) || (now + preview.days * 86400000),
+      quantityAsset: preview.qtyAsset,
+      collateralAsset: preview.collateralAsset,
+      collateralUsdc: preview.collateralUsdc,
+      premiumAsset: preview.premiumAsset,
+      premiumUsdc: preview.premiumUsdc,
+      periodRate: preview.periodRate,
+      entrySpot: spots[tradeForm.asset],
+      entryTs: now,
+    }
+
+    setBalances((prev) => {
+      if (preview.side === 'sell-high') {
+        return { ...prev, [tradeForm.asset]: prev[tradeForm.asset] - preview.collateralAsset }
+      }
+      return { ...prev, USDC: prev.USDC - preview.collateralUsdc }
+    })
+
+    setPositions((prev) => [position, ...prev])
+    setShowTradeModal(false)
+  }
+
+  const settlePosition = (id) => {
+    const pos = positions.find((p) => p.id === id)
     if (!pos) return
-    // Simuler la clôture au prix actuel
-    const currentPrice = pos.entryPrice // simplification, devrait récupérer prix actuel
-    const pnl = (currentPrice - pos.entryPrice) * pos.quantity * (pos.side === 'buy' ? 1 : -1)
-    setBalance(prev => prev + pnl)
-    setPositions(prev => prev.filter(p => p.id !== id))
+
+    const settleSpot = spots[pos.asset]
+    if (!settleSpot) return alert('Spot indisponible pour settlement')
+
+    const exercised = pos.side === 'sell-high'
+      ? settleSpot >= pos.strike
+      : settleSpot <= pos.strike
+
+    setBalances((prev) => {
+      const next = { ...prev }
+      if (pos.side === 'sell-high') {
+        if (exercised) {
+          next.USDC += pos.collateralAsset * pos.strike
+          next[pos.asset] += pos.premiumAsset
+        } else {
+          next[pos.asset] += pos.collateralAsset + pos.premiumAsset
+        }
+      } else if (exercised) {
+        next[pos.asset] += pos.collateralUsdc / pos.strike
+        next.USDC += pos.premiumUsdc
+      } else {
+        next.USDC += pos.collateralUsdc + pos.premiumUsdc
+      }
+      return next
+    })
+
+    setPositions((prev) => prev.filter((p) => p.id !== id))
   }
 
   return (
@@ -182,188 +453,219 @@ export default function PaperTradingPage({ onBack }) {
       <div className="app-content">
         <div className="page-wrap">
 
-          {/* Header */}
           <div className="page-header">
-            <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-              <button onClick={onBack} style={{ background:'none', border:'none', cursor:'pointer', color:'var(--text-muted)', padding:4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <button onClick={onBack} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 4 }}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <path d="M19 12H5M12 19l-7-7 7-7"/>
                 </svg>
               </button>
-              <div className="page-title">Paper <span>Trading</span></div>
+              <div className="page-title">Dual <span>Paper Trading</span></div>
             </div>
-            <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-              <div className="price-pill"><span className="price-label">{asset}</span><span className="price-value">${spot?.toLocaleString()}</span></div>
-              <button className="icon-btn" onClick={() => setShowNewTrade(true)}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button className="icon-btn" onClick={openNewTrade}>
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <path d="M12 5v14M5 12h14"/>
                 </svg>
+                Nouvelle
               </button>
+              <button className="icon-btn" onClick={resetSimulation}>Reset</button>
             </div>
           </div>
 
-          {/* Balance & P&L */}
-          <div style={{ display:'flex', gap:12, marginBottom:16 }}>
-            <div style={{ background:'var(--surface)', border:'1px solid var(--border)', borderRadius:10, padding:'12px 14px', flex:1 }}>
-              <div style={{ fontSize:10, color:'var(--text-muted)', marginBottom:2 }}>Solde</div>
-              <div style={{ fontFamily:'var(--sans)', fontWeight:800, fontSize:16, color:'var(--text)' }}>${balance.toLocaleString()}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
+            <div className="stat-card">
+              <div className="stat-label">Equity</div>
+              <div className="stat-value blue">${formatNum(equity, 2)}</div>
             </div>
-            <div style={{ background:'var(--surface)', border:'1px solid var(--border)', borderRadius:10, padding:'12px 14px', flex:1 }}>
-              <div style={{ fontSize:10, color:'var(--text-muted)', marginBottom:2 }}>P&L Total</div>
-              <div style={{ fontFamily:'var(--sans)', fontWeight:800, fontSize:16, color: pnl >= 0 ? 'var(--call)' : 'var(--put)' }}>
-                {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+            <div className="stat-card">
+              <div className="stat-label">P&L Simule</div>
+              <div className="stat-value" style={{ color: pnl >= 0 ? 'var(--call)' : 'var(--put)' }}>{pnl >= 0 ? '+' : ''}{formatNum(pnl, 2)} USD</div>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
+            <div className="card" style={{ padding: '10px 12px' }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>USDC dispo</div>
+              <div style={{ fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 14 }}>${formatNum(balances.USDC, 2)}</div>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>Lock: ${formatNum(lockedSummary.USDC, 2)}</div>
+            </div>
+            <div className="card" style={{ padding: '10px 12px' }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>BTC dispo</div>
+              <div style={{ fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 14 }}>{formatNum(balances.BTC, 5)} BTC</div>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>Lock: {formatNum(lockedSummary.BTC, 5)}</div>
+            </div>
+            <div className="card" style={{ padding: '10px 12px' }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>ETH dispo</div>
+              <div style={{ fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 14 }}>{formatNum(balances.ETH, 4)} ETH</div>
+              <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>Lock: {formatNum(lockedSummary.ETH, 4)}</div>
+            </div>
+          </div>
+
+          <PerformanceChart points={history} />
+
+          <div className="asset-toggle" style={{ margin: '12px 0' }}>
+            <button className={`asset-btn${asset === 'BTC' ? ' active-btc' : ''}`} onClick={() => setAsset('BTC')}>BTC</button>
+            <button className={`asset-btn${asset === 'ETH' ? ' active-eth' : ''}`} onClick={() => setAsset('ETH')}>ETH</button>
+          </div>
+
+          <div style={{ marginBottom: 10, fontSize: 11, color: 'var(--text-muted)' }}>
+            Spot {asset}: <span style={{ color: 'var(--accent)', fontWeight: 700 }}>${formatNum(currentSpot, 2)}</span>
+          </div>
+
+          <div style={{ fontFamily: 'var(--sans)', fontWeight: 700, fontSize: 14, color: 'var(--text)', marginBottom: 8 }}>Positions DI ouvertes ({asset})</div>
+          {positions.filter((p) => p.asset === asset).length === 0 ? (
+            <div className="card">
+              <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>
+                Aucune position ouverte. Utilise Subscribe depuis la chaine ou "Nouvelle".
               </div>
             </div>
-          </div>
-
-          {/* Asset toggle */}
-          <div className="asset-toggle" style={{ marginBottom:12 }}>
-            <button className={`asset-btn${asset==='BTC'?' active-btc':''}`} onClick={() => setAsset('BTC')}>BTC</button>
-            <button className={`asset-btn${asset==='ETH'?' active-eth':''}`} onClick={() => setAsset('ETH')}>ETH</button>
-          </div>
-
-          {/* Positions */}
-          <div style={{ marginBottom:16 }}>
-            <div style={{ fontFamily:'var(--sans)', fontWeight:700, fontSize:14, color:'var(--text)', marginBottom:8 }}>Positions ouvertes</div>
-            {positions.filter(p => p.asset === asset).length === 0 ? (
-              <div className="card">
-                <div style={{ padding:24, textAlign:'center', color:'var(--text-muted)' }}>
-                  Aucune position ouverte
-                </div>
-              </div>
-            ) : (
-              positions.filter(p => p.asset === asset).map(pos => (
-                <div key={pos.id} className="card" style={{ marginBottom:8 }}>
-                  <div style={{ padding:'12px 14px' }}>
-                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
+          ) : (
+            positions.filter((p) => p.asset === asset).map((pos) => {
+              const exercisedIfNow = pos.side === 'sell-high' ? (currentSpot >= pos.strike) : (currentSpot <= pos.strike)
+              return (
+                <div key={pos.id} className="card" style={{ marginBottom: 8 }}>
+                  <div style={{ padding: '12px 14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', marginBottom: 7 }}>
                       <div>
-                        <div style={{ fontFamily:'var(--sans)', fontWeight:700, fontSize:13, color:'var(--text)' }}>
-                          {pos.side === 'buy' ? 'Achat' : 'Vente'} {pos.optionType} ${pos.strike}
+                        <div style={{ fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 13, color: 'var(--text)' }}>
+                          {pos.side === 'buy-low' ? 'Buy Low' : 'Sell High'} {pos.asset} @ ${formatNum(pos.strike, 0)}
                         </div>
-                        <div style={{ fontSize:10, color:'var(--text-muted)' }}>
-                          {pos.expiry} · {pos.quantity} contrat{pos.quantity > 1 ? 's' : ''}
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                          APR {formatNum(pos.apr, 2)}% · {formatNum(pos.days, 2)}j · exp {formatDate(pos.expiryTs)}
                         </div>
                       </div>
-                      <button onClick={() => closePosition(pos.id)} style={{
-                        background:'var(--put)', color:'white', border:'none', borderRadius:6, padding:'4px 8px',
-                        fontSize:10, cursor:'pointer'
-                      }}>
-                        Clôturer
+                      <button onClick={() => settlePosition(pos.id)} style={{ background: 'var(--accent)', color: '#001016', border: 'none', borderRadius: 7, padding: '6px 10px', cursor: 'pointer', fontWeight: 700, fontSize: 11 }}>
+                        Regler au spot actuel
                       </button>
                     </div>
-                    <div style={{ fontSize:11, color:'var(--text-muted)' }}>
-                      Entrée: ${pos.entryPrice.toFixed(2)} · Spot: ${pos.spotAtEntry?.toLocaleString()}
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 10 }}>
+                      <div style={{ background: 'rgba(0,212,255,.06)', border: '1px solid rgba(0,212,255,.2)', borderRadius: 8, padding: '7px 8px' }}>
+                        <div style={{ color: 'var(--text-muted)', marginBottom: 3 }}>Si exerce</div>
+                        {pos.side === 'sell-high' ? (
+                          <div style={{ color: 'var(--text)' }}>Vente {formatNum(pos.collateralAsset, 6)} {pos.asset} a {formatNum(pos.strike, 0)} + prime {formatNum(pos.premiumAsset, 6)} {pos.asset}</div>
+                        ) : (
+                          <div style={{ color: 'var(--text)' }}>Conversion ${formatNum(pos.collateralUsdc, 2)} en {formatNum(pos.collateralUsdc / pos.strike, 6)} {pos.asset} + prime ${formatNum(pos.premiumUsdc, 2)}</div>
+                        )}
+                      </div>
+
+                      <div style={{ background: 'rgba(255,255,255,.03)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 8px' }}>
+                        <div style={{ color: 'var(--text-muted)', marginBottom: 3 }}>Si non exerce</div>
+                        {pos.side === 'sell-high' ? (
+                          <div style={{ color: 'var(--text)' }}>Retour {formatNum(pos.collateralAsset + pos.premiumAsset, 6)} {pos.asset}</div>
+                        ) : (
+                          <div style={{ color: 'var(--text)' }}>Retour ${formatNum(pos.collateralUsdc + pos.premiumUsdc, 2)} USDC</div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: 7, fontSize: 10, color: exercisedIfNow ? 'var(--accent2)' : 'var(--call)' }}>
+                      Etat au spot actuel: {exercisedIfNow ? 'Exerce' : 'Non exerce'}
                     </div>
                   </div>
                 </div>
-              ))
-            )}
-          </div>
+              )
+            })
+          )}
 
-          {/* New Trade Modal */}
-          {showNewTrade && (
-            <div style={{
-              position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,.5)',
-              display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000
-            }}>
-              <div style={{ background:'var(--bg)', border:'1px solid var(--border)', borderRadius:12, padding:20, width:'90%', maxWidth:320 }}>
-                <div style={{ fontFamily:'var(--sans)', fontWeight:800, fontSize:16, color:'var(--text)', marginBottom:16 }}>Nouvelle transaction</div>
-
-                <div style={{ display:'flex', gap:8, marginBottom:12 }}>
-                  <button className={`asset-btn${newTrade.type==='buy'?' active-btc':''}`} onClick={() => setNewTrade({...newTrade, type:'buy'})}>Achat</button>
-                  <button className={`asset-btn${newTrade.type==='sell'?' active-eth':''}`} onClick={() => setNewTrade({...newTrade, type:'sell'})}>Vente</button>
+          {showTradeModal && (
+            <div style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,.56)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 14 }}>
+              <div style={{ width: '100%', maxWidth: 440, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 12, padding: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <div style={{ fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 16, color: 'var(--text)' }}>Transaction DI</div>
+                  <button onClick={() => setShowTradeModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>Fermer</button>
                 </div>
 
-                <div style={{ display:'flex', gap:8, marginBottom:12 }}>
-                  <button className={`asset-btn${newTrade.optionType==='call'?' active-btc':''}`} onClick={() => setNewTrade({...newTrade, optionType:'call'})}>Call</button>
-                  <button className={`asset-btn${newTrade.optionType==='put'?' active-eth':''}`} onClick={() => setNewTrade({...newTrade, optionType:'put'})}>Put</button>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                  <button className={`asset-btn${tradeForm.asset === 'BTC' ? ' active-btc' : ''}`} onClick={() => setTradeForm((p) => ({ ...p, asset: 'BTC', quantityAsset: Math.max(Number(p.quantityAsset) || 0, MIN_LOT.BTC) }))}>BTC</button>
+                  <button className={`asset-btn${tradeForm.asset === 'ETH' ? ' active-eth' : ''}`} onClick={() => setTradeForm((p) => ({ ...p, asset: 'ETH', quantityAsset: Math.max(Number(p.quantityAsset) || 0, MIN_LOT.ETH) }))}>ETH</button>
                 </div>
 
-                <input
-                  type="number"
-                  placeholder="Strike"
-                  value={newTrade.strike}
-                  onChange={e => setNewTrade({...newTrade, strike: e.target.value})}
-                  style={{ width:'100%', padding:8, border:'1px solid var(--border)', borderRadius:6, marginBottom:8, background:'var(--surface)', color:'var(--text)' }}
-                />
+                <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                  <button className={`asset-btn${tradeForm.side === 'buy-low' ? ' active-btc' : ''}`} onClick={() => setTradeForm((p) => ({ ...p, side: 'buy-low' }))}>Buy Low</button>
+                  <button className={`asset-btn${tradeForm.side === 'sell-high' ? ' active-eth' : ''}`} onClick={() => setTradeForm((p) => ({ ...p, side: 'sell-high' }))}>Sell High</button>
+                </div>
 
-                <input
-                  type="text"
-                  placeholder="Expiry (YYYY-MM-DD ou 28MAR26)"
-                  value={newTrade.expiry}
-                  onChange={e => setNewTrade({...newTrade, expiry: e.target.value})}
-                  style={{ width:'100%', padding:8, border:'1px solid var(--border)', borderRadius:6, marginBottom:8, background:'var(--surface)', color:'var(--text)' }}
-                />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <input type="number" placeholder="Strike" value={tradeForm.strike}
+                    onChange={(e) => setTradeForm((p) => ({ ...p, strike: e.target.value }))}
+                    style={{ width: '100%', padding: 9, borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
+                  />
+                  <input type="number" placeholder="APR %" value={tradeForm.apr}
+                    onChange={(e) => setTradeForm((p) => ({ ...p, apr: e.target.value }))}
+                    style={{ width: '100%', padding: 9, borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
+                  />
+                  <input type="number" placeholder="Duree (jours)" value={tradeForm.days}
+                    onChange={(e) => setTradeForm((p) => ({ ...p, days: e.target.value }))}
+                    style={{ width: '100%', padding: 9, borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
+                  />
+                  <input type="number" step="0.0001" placeholder={`Quantite ${tradeForm.asset}`} value={tradeForm.quantityAsset}
+                    onChange={(e) => setTradeForm((p) => ({ ...p, quantityAsset: e.target.value }))}
+                    style={{ width: '100%', padding: 9, borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
+                  />
+                </div>
 
-                <input
-                  type="number"
-                  placeholder="Quantité"
-                  value={newTrade.quantity}
-                  onChange={e => setNewTrade({...newTrade, quantity: parseInt(e.target.value) || 1})}
-                  style={{ width:'100%', padding:8, border:'1px solid var(--border)', borderRadius:6, marginBottom:16, background:'var(--surface)', color:'var(--text)' }}
-                />
+                {tradeForm.expiryTs ? (
+                  <div style={{ marginTop: 8, fontSize: 10, color: 'var(--text-muted)' }}>
+                    Expiration contrat: {formatDate(Number(tradeForm.expiryTs))} {formatTime(Number(tradeForm.expiryTs))} UTC
+                  </div>
+                ) : null}
 
-                {quoteLoading && <div style={{ fontSize:11, color:'var(--text-muted)', marginBottom:12 }}>Chargement du pricing…</div>}
-                {quoteError && <div style={{ fontSize:11, color:'var(--put)', marginBottom:12 }}>{quoteError}</div>}
-
-                {quote && spot && Number(newTrade.strike) > 0 && (
-                  <div style={{ background:'var(--surface)', border:'1px solid var(--border)', borderRadius:8, padding:'10px 12px', marginBottom:14 }}>
-                    <div style={{ display:'flex', justifyContent:'space-between', marginBottom:8, fontSize:10 }}>
-                      <span style={{ color:'var(--text-muted)' }}>{quote.instrument}</span>
-                      <span style={{ color:'var(--accent)', fontWeight:700 }}>Prime {quote.premiumUsd.toFixed(2)} USD</span>
+                {tradePreview && !tradePreview.invalidLot ? (
+                  <div style={{ marginTop: 12, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 9, padding: '10px 12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginBottom: 5 }}>
+                      <span style={{ color: 'var(--text-muted)' }}>Relation APR/temps</span>
+                      <span style={{ color: 'var(--accent)', fontWeight: 700 }}>taux periode = APR x jours / 365</span>
                     </div>
-                    {(() => {
-                      const strike = Number(newTrade.strike)
-                      const minS = Math.max(1, spot * 0.7)
-                      const maxS = spot * 1.3
-                      const points = Array.from({ length: 25 }, (_, i) => {
-                        const s = minS + (i / 24) * (maxS - minS)
-                        const y = calcPayoffUSD(newTrade.type, newTrade.optionType, strike, quote.premiumUsd, newTrade.quantity, s)
-                        return { s, y }
-                      })
-                      const ys = points.map(p => p.y)
-                      const yMin = Math.min(...ys)
-                      const yMax = Math.max(...ys)
-                      const ySpan = Math.max(1, yMax - yMin)
-                      const width = 280
-                      const height = 120
-                      const mapX = (s) => ((s - minS) / (maxS - minS)) * width
-                      const mapY = (y) => height - ((y - yMin) / ySpan) * height
-                      const line = points.map(p => `${mapX(p.s).toFixed(1)},${mapY(p.y).toFixed(1)}`).join(' ')
-                      const y0 = mapY(0)
-                      const xSpot = mapX(spot)
+                    <div style={{ fontSize: 11, color: 'var(--text)', marginBottom: 8 }}>
+                      {formatNum(tradePreview.apr, 2)}% x {formatNum(tradePreview.days, 2)} / 365 = {(tradePreview.periodRate * 100).toFixed(3)}%
+                    </div>
 
-                      return (
-                        <>
-                          <div style={{ fontSize:10, color:'var(--text-muted)', marginBottom:6 }}>P&L à l'échéance (estimation)</div>
-                          <svg viewBox={`0 0 ${width} ${height}`} style={{ width:'100%', height:120, display:'block', borderRadius:6, background:'rgba(0,0,0,.15)' }}>
-                            <line x1="0" y1={y0} x2={width} y2={y0} stroke="rgba(255,255,255,.25)" strokeWidth="1" />
-                            <line x1={xSpot} y1="0" x2={xSpot} y2={height} stroke="rgba(0,212,255,.35)" strokeWidth="1" strokeDasharray="3 3" />
-                            <polyline fill="none" stroke="var(--atm)" strokeWidth="2" points={line} />
-                          </svg>
-                          <div style={{ display:'flex', justifyContent:'space-between', marginTop:6, fontSize:10, color:'var(--text-muted)' }}>
-                            <span>{Math.round(minS).toLocaleString()} USD</span>
-                            <span>Spot: {Math.round(spot).toLocaleString()} USD</span>
-                            <span>{Math.round(maxS).toLocaleString()} USD</span>
-                          </div>
-                        </>
-                      )
-                    })()}
+                    {tradePreview.side === 'sell-high' ? (
+                      <>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Collateral requis: {formatNum(tradePreview.collateralAsset, 6)} {tradeForm.asset} (min {tradePreview.minLot})</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Prime estimee: {formatNum(tradePreview.premiumAsset, 6)} {tradeForm.asset}</div>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Collateral requis: ${formatNum(tradePreview.collateralUsdc, 2)} USDC</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Prime estimee: ${formatNum(tradePreview.premiumUsdc, 2)} USDC</div>
+                      </>
+                    )}
+
+                    <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 10 }}>
+                      <div style={{ border: '1px solid rgba(0,229,160,.25)', borderRadius: 8, padding: '7px 8px', background: 'rgba(0,229,160,.06)' }}>
+                        <div style={{ color: 'var(--call)', marginBottom: 3, fontWeight: 700 }}>Non exerce</div>
+                        <div style={{ color: 'var(--text)' }}>
+                          {tradePreview.side === 'sell-high'
+                            ? `Retour ${formatNum(tradePreview.collateralAsset + tradePreview.premiumAsset, 6)} ${tradeForm.asset}`
+                            : `Retour ${formatNum(tradePreview.collateralUsdc + tradePreview.premiumUsdc, 2)} USDC`}
+                        </div>
+                      </div>
+                      <div style={{ border: '1px solid rgba(255,107,53,.25)', borderRadius: 8, padding: '7px 8px', background: 'rgba(255,107,53,.06)' }}>
+                        <div style={{ color: 'var(--accent2)', marginBottom: 3, fontWeight: 700 }}>Exerce</div>
+                        <div style={{ color: 'var(--text)' }}>
+                          {tradePreview.side === 'sell-high'
+                            ? `Vente au strike + prime ${formatNum(tradePreview.premiumAsset, 6)} ${tradeForm.asset}`
+                            : `USDC convertis en ${formatNum(tradePreview.collateralUsdc / tradePreview.strike, 6)} ${tradeForm.asset}`}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 12, color: 'var(--put)', fontSize: 11 }}>
+                    {tradePreview?.invalidLot ? `Lot minimum ${tradeForm.asset}: ${tradePreview.minLot}` : 'Renseigne strike, APR, duree et quantite.'}
                   </div>
                 )}
 
-                <div style={{ display:'flex', gap:8 }}>
-                  <button onClick={() => setShowNewTrade(false)} style={{
-                    flex:1, padding:10, border:'1px solid var(--border)', borderRadius:6, background:'none', color:'var(--text-muted)', cursor:'pointer'
-                  }}>Annuler</button>
-                  <button onClick={executeTrade} style={{
-                    flex:1, padding:10, border:'none', borderRadius:6, background:'var(--accent)', color:'white', cursor:'pointer'
-                  }}>Exécuter</button>
+                <div style={{ marginTop: 14, display: 'flex', gap: 8 }}>
+                  <button onClick={() => setShowTradeModal(false)} style={{ flex: 1, padding: 10, borderRadius: 7, border: '1px solid var(--border)', background: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>Annuler</button>
+                  <button onClick={executeTrade} style={{ flex: 1, padding: 10, borderRadius: 7, border: 'none', background: 'var(--accent)', color: '#001016', cursor: 'pointer', fontWeight: 700 }}>Executer</button>
                 </div>
               </div>
             </div>
           )}
-
         </div>
       </div>
     </div>

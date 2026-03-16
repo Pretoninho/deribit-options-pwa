@@ -44,6 +44,7 @@ const DI_TABS = [
 export default function App() {
   const [view, setView] = useState('home')
   const [diTab, setDiTab] = useState('signal')
+  const [paperPrefill, setPaperPrefill] = useState(null)
 
   useEffect(() => {
     const url = new URL(window.location.href)
@@ -75,9 +76,14 @@ export default function App() {
     }
   }
 
+  const openPaperTrading = (prefill = null) => {
+    setPaperPrefill(prefill)
+    setView('paper')
+  }
+
   // HOME
   if (view === 'home') {
-    return <HomePage onNavigate={setView} />
+    return <HomePage onNavigate={(target) => target === 'paper' ? openPaperTrading() : setView(target)} />
   }
 
   // OPTION ANALYZER (placeholder)
@@ -87,7 +93,7 @@ export default function App() {
 
   // PAPER TRADING
   if (view === 'paper') {
-    return <PaperTradingPage onBack={() => setView('home')} />
+    return <PaperTradingPage onBack={() => setView('home')} prefillTrade={paperPrefill} />
   }
 
   // DI SUITE
@@ -111,7 +117,7 @@ export default function App() {
 
         {diTab === 'signal'  && <SignalPage />}
         {diTab === 'dual'    && <DualPage />}
-        {diTab === 'chain'   && <ChainPage onNavigate={setView} />}
+        {diTab === 'chain'   && <ChainPage onNavigate={setView} onSubscribe={openPaperTrading} />}
         {diTab === 'tracker' && <TrackerPage />}
         {diTab === 'term'    && <TermPage />}
       </div>
