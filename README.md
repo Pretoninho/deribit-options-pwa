@@ -80,6 +80,18 @@ src/
   - `/get_order_book` — IV, greeks, OI
   - `/get_funding_rate_value` — Funding rate perpetuel
 
+## ⚡ Temps réel
+- Flux WebSocket Deribit unique côté client (singleton)
+- Heartbeat `public/test` + watchdog de connexion
+- Reconnexion automatique exponentielle avec jitter
+- Batching des ticks UI (flush ~150ms) pour éviter les freezes de rendu
+
+## 🔐 Sécurité API
+- Ne jamais stocker de secret API en clair dans `localStorage`
+- Recommandé: proxy backend pour signer les requêtes privées
+- Alternative locale: chiffrer la clé avec mot de passe utilisateur (Web Crypto)
+- Sur Deribit, créer des clés à permissions minimales: `trade` uniquement, `withdraw` désactivé
+
 ## 💾 Persistance des données
 - Contrats DI : sauvegardés automatiquement dans `localStorage`
 - DCA BTC : sauvegardé dans `localStorage`

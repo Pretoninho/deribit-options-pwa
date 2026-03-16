@@ -1,15 +1,33 @@
 import { useState, useEffect, useRef } from 'react'
-import { getATMIV, getDVOL, getFundingRate, getOpenInterest, getRealizedVol } from '../utils/api.js'
+import { getATMIV, getDVOL, getFundingRate, getOpenInterest, getRealizedVol, getSpot, getInstruments } from '../utils/api.js'
+import { deribitWs, createBatchProcessor } from '../utils/deribitWs.js'
 import { Line } from 'react-chartjs-2'
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler } from 'chart.js'
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler)
 
 const MAX_POINTS = 200
+const MIN_POINT_INTERVAL_MS = 1000
 const LS_KEY = 'iv_tracker_history'
 
 function fmtD(ts) {
   const d = new Date(ts)
   return d.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit', second:'2-digit' })
+}
+
+function pickFrontAtmInstruments(spot, instruments) {
+  if (!spot || !instruments?.length) return null
+  const now = Date.now()
+  const expiries = [...new Set(instruments.map(i => i.expiration_timestamp).filter(ts => ts > now))].sort((a, b) => a - b)
+  if (!expiries.length) return null
+  const frontTs = expiries[0]
+  const frontInstruments = instruments.filter(i => i.expiration_timestamp === frontTs)
+  const strikes = [...new Set(frontInstruments.map(i => i.strike))].sort((a, b) => a - b)
+  if (!strikes.length) return null
+  const atmStrike = strikes.reduce((prev, curr) => (Math.abs(curr - spot) < Math.abs(prev - spot) ? curr : prev), strikes[0])
+  const callInstrument = frontInstruments.find(i => i.option_type === 'call' && i.strike === atmStrike)?.instrument_name
+  const putInstrument = frontInstruments.find(i => i.option_type === 'put' && i.strike === atmStrike)?.instrument_name
+  if (!callInstrument || !putInstrument) return null
+  return { atmStrike, callInstrument, putInstrument }
 }
 
 export default function TrackerPage() {
@@ -26,8 +44,98 @@ export default function TrackerPage() {
   const [context, setContext] = useState(null)
   const [contextLoading, setContextLoading] = useState(false)
   const [activeTab, setActiveTab] = useState('tracker')
+  const [wsStatus, setWsStatus] = useState('stopped')
   const timerRef = useRef(null)
   const countRef = useRef(null)
+  const streamUnsubRef = useRef([])
+  const batchRef = useRef(null)
+  const bufferRef = useRef({ spot: null, callIV: null, putIV: null, atmStrike: null })
+  const lastPushRef = useRef(0)
+
+  const stopStream = () => {
+    streamUnsubRef.current.forEach(unsub => {
+      try { unsub() } catch (_) {}
+    })
+    streamUnsubRef.current = []
+    if (batchRef.current) {
+      batchRef.current.dispose()
+      batchRef.current = null
+    }
+    bufferRef.current = { spot: null, callIV: null, putIV: null, atmStrike: null }
+  }
+
+  const pushPoint = ({ spot, iv, atmStrike }) => {
+    if (!Number.isFinite(spot) || !Number.isFinite(iv)) return
+    const now = Date.now()
+    if (now - lastPushRef.current < MIN_POINT_INTERVAL_MS) return
+    lastPushRef.current = now
+
+    const point = { timestamp: new Date(now).toISOString(), spot, iv, atmStrike }
+    setHistory(prev => {
+      const next = [...prev, point].slice(-MAX_POINTS)
+      saveHistory(next, asset)
+      if (alertThreshold > 0 && iv >= alertThreshold) setAlertTriggered(true)
+      return next
+    })
+  }
+
+  const startStream = async (a) => {
+    stopStream()
+    setWsStatus('connecting')
+
+    try {
+      const [spotNow, instruments] = await Promise.all([
+        getSpot(a).catch(() => null),
+        getInstruments(a).catch(() => []),
+      ])
+      const target = pickFrontAtmInstruments(spotNow, instruments)
+      if (!target) {
+        setWsStatus('fallback-rest')
+        return
+      }
+
+      const { atmStrike, callInstrument, putInstrument } = target
+      bufferRef.current = { spot: spotNow, callIV: null, putIV: null, atmStrike }
+
+      batchRef.current = createBatchProcessor((batch) => {
+        const next = { ...bufferRef.current }
+        batch.forEach(({ data, channel }) => {
+          if (channel.startsWith('ticker.')) {
+            next.spot = data?.mark_price ?? data?.last_price ?? next.spot
+            return
+          }
+          if (!channel.startsWith('book.')) return
+          const channelParts = channel.split('.')
+          const instrumentName = channelParts[1]
+          if (instrumentName === callInstrument) next.callIV = data?.mark_iv ?? next.callIV
+          if (instrumentName === putInstrument) next.putIV = data?.mark_iv ?? next.putIV
+        })
+
+        bufferRef.current = next
+        const iv = (Number.isFinite(next.callIV) && Number.isFinite(next.putIV))
+          ? (next.callIV + next.putIV) / 2
+          : (next.callIV ?? next.putIV)
+
+        if (Number.isFinite(iv) && Number.isFinite(next.spot)) {
+          pushPoint({ spot: next.spot, iv, atmStrike: next.atmStrike })
+        }
+      }, 150)
+
+      const channels = [
+        `ticker.${a}-PERPETUAL.100ms`,
+        `book.${callInstrument}.100ms`,
+        `book.${putInstrument}.100ms`,
+      ]
+
+      const unsub = deribitWs.subscribe(channels, (data, channel) => {
+        batchRef.current?.push({ data, channel })
+      })
+      streamUnsubRef.current = [unsub]
+      setWsStatus('connected')
+    } catch (_) {
+      setWsStatus('fallback-rest')
+    }
+  }
 
   const saveHistory = (h, a) => localStorage.setItem(LS_KEY + '_' + a, JSON.stringify(h.slice(-MAX_POINTS)))
 
@@ -61,6 +169,7 @@ export default function TrackerPage() {
   const start = () => {
     setRunning(true)
     setAlertTriggered(false)
+    startStream(asset)
     fetchAndRecord(asset)
     timerRef.current = setInterval(() => fetchAndRecord(asset), intervalSec * 1000)
     setCountdown(intervalSec)
@@ -73,6 +182,8 @@ export default function TrackerPage() {
     clearInterval(countRef.current)
     timerRef.current = null
     setCountdown(0)
+    stopStream()
+    setWsStatus('stopped')
   }
 
   const switchAsset = (a) => {
@@ -90,6 +201,21 @@ export default function TrackerPage() {
   }
 
   useEffect(() => () => { clearInterval(timerRef.current); clearInterval(countRef.current) }, [])
+
+  useEffect(() => {
+    const off = deribitWs.onStatus(status => {
+      if (!running) return
+      if (status === 'reconnecting') setWsStatus('reconnecting')
+      if (status === 'connected') setWsStatus('connected')
+    })
+    return () => off()
+  }, [running])
+
+  useEffect(() => () => {
+    clearInterval(timerRef.current)
+    clearInterval(countRef.current)
+    stopStream()
+  }, [])
 
   const last      = history[history.length - 1]
   const ivs       = history.map(r => r.iv).filter(Boolean)
@@ -196,7 +322,7 @@ export default function TrackerPage() {
         <div className="page-title">IV <span>Live</span></div>
         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
           <div className={`dot-live${running?'':' off'}`} />
-          <span className="status-text">{running ? `${countdown}s` : 'Arrêté'}</span>
+          <span className="status-text">{running ? `${countdown}s · ${wsStatus}` : 'Arrêté'}</span>
         </div>
       </div>
 
@@ -224,6 +350,7 @@ export default function TrackerPage() {
           <div className="controls-row">
             <select style={{ background:'var(--surface)', border:'1px solid var(--border)', color:'var(--text)', padding:'7px 10px', borderRadius:8, fontSize:11, outline:'none' }}
               value={intervalSec} onChange={e => setIntervalSec(parseInt(e.target.value))}>
+              <option value={5}>5s</option>
               <option value={10}>10s</option>
               <option value={30}>30s</option>
               <option value={60}>60s</option>
@@ -286,6 +413,18 @@ export default function TrackerPage() {
                 <div style={{ fontSize:10, color:'var(--text-muted)' }}>💡 IV BTC oscille souvent entre 50-70%. Un spike &gt;80% est exceptionnel.</div>
               </div>
             )}
+          </div>
+
+          <div className="card" style={{ marginBottom:12 }}>
+            <div className="card-header">
+              <span>Flux temps réel</span>
+              <span style={{ fontSize:10, color:wsStatus === 'connected' ? 'var(--call)' : 'var(--text-muted)' }}>
+                {running ? wsStatus : 'inactif'}
+              </span>
+            </div>
+            <div style={{ padding:'10px 14px', fontSize:11, color:'var(--text-muted)', lineHeight:1.6 }}>
+              WebSocket singleton + heartbeat + reconnexion exponentielle. Les ticks sont regroupés et flushés toutes les 150ms pour limiter les rerenders; un snapshot REST périodique reste actif en fallback.
+            </div>
           </div>
 
           {history.length > 1 && (

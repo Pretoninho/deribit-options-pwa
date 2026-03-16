@@ -1,11 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import HomePage from './pages/HomePage.jsx'
 import ChainPage from './pages/ChainPage.jsx'
 import TrackerPage from './pages/TrackerPage.jsx'
 import DualPage from './pages/DualPage.jsx'
 import TermPage from './pages/TermPage.jsx'
 import SignalPage from './pages/SignalPage.jsx'
-import OptionsPage from './pages/OptionsPage.jsx'
 import OptionsPage from './pages/OptionsPage.jsx'
 import PaperTradingPage from './pages/PaperTradingPage.jsx'
 import './App.css'
@@ -45,6 +44,25 @@ const DI_TABS = [
 export default function App() {
   const [view, setView] = useState('home')
   const [diTab, setDiTab] = useState('signal')
+
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    const targetView = url.searchParams.get('view')
+    if (!targetView) return
+    const map = {
+      signal: 'signal',
+      dual: 'dual',
+      chain: 'chain',
+      tracker: 'tracker',
+      term: 'term',
+      basis: 'term',
+    }
+    const tab = map[targetView]
+    if (tab) {
+      setView('di-suite')
+      setDiTab(tab)
+    }
+  }, [])
 
   const forceUpdate = () => {
     if ('serviceWorker' in navigator) {

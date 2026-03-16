@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { getSpot, getInstruments, getOrderBook, getAllExpiries, getBestDIOpportunities } from '../utils/api.js'
+import { calcOptionGreeks } from '../utils/greeks.js'
 
 function fmtTs(ts) {
   return new Date(ts).toLocaleDateString('fr-FR',{day:'2-digit',month:'short',year:'2-digit'}).toUpperCase()
@@ -35,6 +36,7 @@ export default function ChainPage() {
   const [nexoRates,setNexoRates]=useState({})
   const [opps,setOpps]=useState([])
   const [oppsLoading,setOppsLoading]=useState(false)
+  const [atmGreeks,setAtmGreeks]=useState(null)
 
   const loadExpiries=async(a)=>{
     setLoading(true);setError(null)
@@ -69,6 +71,32 @@ export default function ChainPage() {
     setRows(allRows)
     const atmRow=spotNow?allRows.reduce((p,c)=>Math.abs(c.strike-spotNow)<Math.abs(p.strike-spotNow)?c:p,allRows[0]):null
     const atmiv=atmRow?.call?.mark_iv??atmRow?.put?.mark_iv??null
+    const daysToExpiry=Math.max(0.01,daysUntil(expiryTs))
+    const sigma=atmiv!=null?atmiv/100:null
+    const callGreeks=(spotNow&&atmRow?.strike&&sigma)?calcOptionGreeks({
+      type:'call',
+      S:spotNow,
+      K:atmRow.strike,
+      T:daysToExpiry/365,
+      sigma,
+      r:0,
+    }):null
+    const putGreeks=(spotNow&&atmRow?.strike&&sigma)?calcOptionGreeks({
+      type:'put',
+      S:spotNow,
+      K:atmRow.strike,
+      T:daysToExpiry/365,
+      sigma,
+      r:0,
+    }):null
+
+    setAtmGreeks(callGreeks&&putGreeks?{
+      strike:atmRow?.strike,
+      iv:atmiv,
+      days:daysToExpiry,
+      call:callGreeks,
+      put:putGreeks,
+    }:null)
     setAtmIV(atmiv)
     const callIVs=allRows.map(r=>r.call?.mark_iv).filter(Boolean)
     const putIVs=allRows.map(r=>r.put?.mark_iv).filter(Boolean)
@@ -143,6 +171,35 @@ export default function ChainPage() {
           <div className="stat-card"><div className="stat-label">Contrats</div><div className="stat-value blue">{stats.contracts}</div></div>
           <div className="stat-card"><div className="stat-label">IV Calls</div><div className="stat-value green">{stats.callIV}%</div></div>
           <div className="stat-card"><div className="stat-label">IV Puts</div><div className="stat-value orange">{stats.putIV}%</div></div>
+        </div>
+      )}
+
+      {activeTab==='chain'&&atmGreeks&&(
+        <div className="card" style={{marginBottom:12}}>
+          <div className="card-header">
+            <span>Grecs ATM (calcul client)</span>
+            <span style={{fontSize:10,color:'var(--text-muted)'}}>IV {atmGreeks.iv.toFixed(1)}% · {atmGreeks.days.toFixed(1)}j</span>
+          </div>
+          <div style={{padding:'10px 14px',display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+            <div style={{background:'rgba(0,229,160,.06)',border:'1px solid rgba(0,229,160,.2)',borderRadius:8,padding:'8px 10px'}}>
+              <div style={{fontSize:10,color:'var(--call)',fontWeight:700,marginBottom:6}}>CALL</div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr auto',gap:4,fontSize:11}}>
+                <span style={{color:'var(--text-muted)'}}>Delta</span><span style={{color:'var(--text)'}}>{atmGreeks.call.delta.toFixed(3)}</span>
+                <span style={{color:'var(--text-muted)'}}>Gamma</span><span style={{color:'var(--text)'}}>{atmGreeks.call.gamma.toFixed(5)}</span>
+                <span style={{color:'var(--text-muted)'}}>Theta/j</span><span style={{color:'var(--text)'}}>{atmGreeks.call.theta.toFixed(3)}</span>
+                <span style={{color:'var(--text-muted)'}}>Vega/1%</span><span style={{color:'var(--text)'}}>{atmGreeks.call.vega.toFixed(3)}</span>
+              </div>
+            </div>
+            <div style={{background:'rgba(255,77,109,.06)',border:'1px solid rgba(255,77,109,.2)',borderRadius:8,padding:'8px 10px'}}>
+              <div style={{fontSize:10,color:'var(--put)',fontWeight:700,marginBottom:6}}>PUT</div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr auto',gap:4,fontSize:11}}>
+                <span style={{color:'var(--text-muted)'}}>Delta</span><span style={{color:'var(--text)'}}>{atmGreeks.put.delta.toFixed(3)}</span>
+                <span style={{color:'var(--text-muted)'}}>Gamma</span><span style={{color:'var(--text)'}}>{atmGreeks.put.gamma.toFixed(5)}</span>
+                <span style={{color:'var(--text-muted)'}}>Theta/j</span><span style={{color:'var(--text)'}}>{atmGreeks.put.theta.toFixed(3)}</span>
+                <span style={{color:'var(--text-muted)'}}>Vega/1%</span><span style={{color:'var(--text)'}}>{atmGreeks.put.vega.toFixed(3)}</span>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

@@ -4,6 +4,40 @@ import { getSpot, getOrderBook } from '../utils/api.js'
 const LS_PAPER_POSITIONS = 'paper_positions'
 const LS_PAPER_BALANCE = 'paper_balance'
 
+function toDeribitExpiry(input) {
+  if (!input) return null
+  const clean = input.trim().toUpperCase()
+  if (/^\d{2}[A-Z]{3}\d{2}$/.test(clean)) return clean
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+    const date = new Date(`${clean}T00:00:00Z`)
+    if (Number.isNaN(date.getTime())) return null
+    const dd = String(date.getUTCDate()).padStart(2, '0')
+    const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
+    const mmm = months[date.getUTCMonth()]
+    const yy = String(date.getUTCFullYear()).slice(-2)
+    return `${dd}${mmm}${yy}`
+  }
+
+  return null
+}
+
+function buildInstrumentName(asset, expiryInput, strike, optionType) {
+  const expiry = toDeribitExpiry(expiryInput)
+  const strikeNum = Number(strike)
+  if (!expiry || !Number.isFinite(strikeNum) || strikeNum <= 0) return null
+  const suffix = optionType === 'put' ? 'P' : 'C'
+  return `${asset}-${expiry}-${Math.round(strikeNum)}-${suffix}`
+}
+
+function calcPayoffUSD(side, optionType, strike, premiumUsd, quantity, spotAtExpiry) {
+  const intrinsic = optionType === 'call'
+    ? Math.max(spotAtExpiry - strike, 0)
+    : Math.max(strike - spotAtExpiry, 0)
+  const unit = side === 'buy' ? intrinsic - premiumUsd : premiumUsd - intrinsic
+  return unit * quantity
+}
+
 export default function PaperTradingPage({ onBack }) {
   const [asset, setAsset] = useState('BTC')
   const [positions, setPositions] = useState(() => {
@@ -14,6 +48,9 @@ export default function PaperTradingPage({ onBack }) {
   const [showNewTrade, setShowNewTrade] = useState(false)
   const [newTrade, setNewTrade] = useState({ type: 'buy', optionType: 'call', strike: '', expiry: '', quantity: 1 })
   const [pnl, setPnl] = useState(0)
+  const [quote, setQuote] = useState(null)
+  const [quoteLoading, setQuoteLoading] = useState(false)
+  const [quoteError, setQuoteError] = useState(null)
 
   useEffect(() => {
     const loadSpot = async () => {
@@ -30,6 +67,52 @@ export default function PaperTradingPage({ onBack }) {
   useEffect(() => {
     localStorage.setItem(LS_PAPER_BALANCE, balance.toString())
   }, [balance])
+
+  useEffect(() => {
+    if (!showNewTrade) return
+    if (!spot || !newTrade.strike || !newTrade.expiry) {
+      setQuote(null)
+      setQuoteError(null)
+      return
+    }
+
+    const instrument = buildInstrumentName(asset, newTrade.expiry, newTrade.strike, newTrade.optionType)
+    if (!instrument) {
+      setQuote(null)
+      setQuoteError('Format expiry invalide. Utilise YYYY-MM-DD ou 28MAR26.')
+      return
+    }
+
+    let cancelled = false
+    const loadQuote = async () => {
+      setQuoteLoading(true)
+      setQuoteError(null)
+      try {
+        const ob = await getOrderBook(instrument).catch(() => null)
+        if (!ob?.mark_price) {
+          if (!cancelled) {
+            setQuote(null)
+            setQuoteError('Instrument introuvable ou mark price indisponible.')
+          }
+          return
+        }
+
+        const premiumUsd = ob.mark_price * spot
+        if (!cancelled) {
+          setQuote({
+            instrument,
+            markPrice: ob.mark_price,
+            premiumUsd,
+          })
+        }
+      } finally {
+        if (!cancelled) setQuoteLoading(false)
+      }
+    }
+    loadQuote()
+
+    return () => { cancelled = true }
+  }, [showNewTrade, asset, newTrade.expiry, newTrade.optionType, newTrade.strike, spot])
 
   // Calculer P&L total
   useEffect(() => {
@@ -52,12 +135,13 @@ export default function PaperTradingPage({ onBack }) {
 
   const executeTrade = async () => {
     if (!newTrade.strike || !newTrade.expiry) return
-    const instrument = `${asset}-${newTrade.expiry}-${newTrade.strike}-${newTrade.optionType[0]}`
+    const instrument = quote?.instrument ?? buildInstrumentName(asset, newTrade.expiry, newTrade.strike, newTrade.optionType)
+    if (!instrument) return alert('Format d\'échéance invalide')
     const ob = await getOrderBook(instrument).catch(() => null)
     if (!ob?.mark_price) return alert('Prix non disponible pour cet instrument')
 
-    const price = ob.mark_price
-    const cost = price * newTrade.quantity * (newTrade.type === 'buy' ? 1 : -1) // options en USD
+    const premiumUsd = ob.mark_price * (spot ?? 0)
+    const cost = premiumUsd * newTrade.quantity * (newTrade.type === 'buy' ? 1 : -1)
 
     if (newTrade.type === 'buy' && cost > balance) return alert('Solde insuffisant')
 
@@ -70,7 +154,7 @@ export default function PaperTradingPage({ onBack }) {
       strike: parseFloat(newTrade.strike),
       expiry: newTrade.expiry,
       quantity: newTrade.quantity,
-      entryPrice: price,
+      entryPrice: premiumUsd,
       entryTime: new Date().toISOString(),
       spotAtEntry: spot
     }
@@ -79,6 +163,8 @@ export default function PaperTradingPage({ onBack }) {
     setBalance(prev => prev - cost)
     setShowNewTrade(false)
     setNewTrade({ type: 'buy', optionType: 'call', strike: '', expiry: '', quantity: 1 })
+    setQuote(null)
+    setQuoteError(null)
   }
 
   const closePosition = (id) => {
@@ -203,7 +289,7 @@ export default function PaperTradingPage({ onBack }) {
 
                 <input
                   type="text"
-                  placeholder="Expiry (YYYY-MM-DD)"
+                  placeholder="Expiry (YYYY-MM-DD ou 28MAR26)"
                   value={newTrade.expiry}
                   onChange={e => setNewTrade({...newTrade, expiry: e.target.value})}
                   style={{ width:'100%', padding:8, border:'1px solid var(--border)', borderRadius:6, marginBottom:8, background:'var(--surface)', color:'var(--text)' }}
@@ -216,6 +302,55 @@ export default function PaperTradingPage({ onBack }) {
                   onChange={e => setNewTrade({...newTrade, quantity: parseInt(e.target.value) || 1})}
                   style={{ width:'100%', padding:8, border:'1px solid var(--border)', borderRadius:6, marginBottom:16, background:'var(--surface)', color:'var(--text)' }}
                 />
+
+                {quoteLoading && <div style={{ fontSize:11, color:'var(--text-muted)', marginBottom:12 }}>Chargement du pricing…</div>}
+                {quoteError && <div style={{ fontSize:11, color:'var(--put)', marginBottom:12 }}>{quoteError}</div>}
+
+                {quote && spot && Number(newTrade.strike) > 0 && (
+                  <div style={{ background:'var(--surface)', border:'1px solid var(--border)', borderRadius:8, padding:'10px 12px', marginBottom:14 }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', marginBottom:8, fontSize:10 }}>
+                      <span style={{ color:'var(--text-muted)' }}>{quote.instrument}</span>
+                      <span style={{ color:'var(--accent)', fontWeight:700 }}>Prime {quote.premiumUsd.toFixed(2)} USD</span>
+                    </div>
+                    {(() => {
+                      const strike = Number(newTrade.strike)
+                      const minS = Math.max(1, spot * 0.7)
+                      const maxS = spot * 1.3
+                      const points = Array.from({ length: 25 }, (_, i) => {
+                        const s = minS + (i / 24) * (maxS - minS)
+                        const y = calcPayoffUSD(newTrade.type, newTrade.optionType, strike, quote.premiumUsd, newTrade.quantity, s)
+                        return { s, y }
+                      })
+                      const ys = points.map(p => p.y)
+                      const yMin = Math.min(...ys)
+                      const yMax = Math.max(...ys)
+                      const ySpan = Math.max(1, yMax - yMin)
+                      const width = 280
+                      const height = 120
+                      const mapX = (s) => ((s - minS) / (maxS - minS)) * width
+                      const mapY = (y) => height - ((y - yMin) / ySpan) * height
+                      const line = points.map(p => `${mapX(p.s).toFixed(1)},${mapY(p.y).toFixed(1)}`).join(' ')
+                      const y0 = mapY(0)
+                      const xSpot = mapX(spot)
+
+                      return (
+                        <>
+                          <div style={{ fontSize:10, color:'var(--text-muted)', marginBottom:6 }}>P&L à l'échéance (estimation)</div>
+                          <svg viewBox={`0 0 ${width} ${height}`} style={{ width:'100%', height:120, display:'block', borderRadius:6, background:'rgba(0,0,0,.15)' }}>
+                            <line x1="0" y1={y0} x2={width} y2={y0} stroke="rgba(255,255,255,.25)" strokeWidth="1" />
+                            <line x1={xSpot} y1="0" x2={xSpot} y2={height} stroke="rgba(0,212,255,.35)" strokeWidth="1" strokeDasharray="3 3" />
+                            <polyline fill="none" stroke="var(--atm)" strokeWidth="2" points={line} />
+                          </svg>
+                          <div style={{ display:'flex', justifyContent:'space-between', marginTop:6, fontSize:10, color:'var(--text-muted)' }}>
+                            <span>{Math.round(minS).toLocaleString()} USD</span>
+                            <span>Spot: {Math.round(spot).toLocaleString()} USD</span>
+                            <span>{Math.round(maxS).toLocaleString()} USD</span>
+                          </div>
+                        </>
+                      )
+                    })()}
+                  </div>
+                )}
 
                 <div style={{ display:'flex', gap:8 }}>
                   <button onClick={() => setShowNewTrade(false)} style={{
