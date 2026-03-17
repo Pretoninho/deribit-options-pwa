@@ -185,6 +185,65 @@ export function getDualRlMetrics() {
   }
 }
 
+export function getDualRlSnapshot() {
+  const table = loadTable()
+  const logs = loadLog()
+  const rewardsByState = logs.reduce((acc, entry) => {
+    if (!entry.stateKey) return acc
+    if (!acc[entry.stateKey]) {
+      acc[entry.stateKey] = { totalReward: 0, count: 0, lastReward: null, lastTs: null }
+    }
+    const rewardPct = Number(entry.rewardPct)
+    if (Number.isFinite(rewardPct)) {
+      acc[entry.stateKey].totalReward += rewardPct
+      acc[entry.stateKey].count += 1
+      acc[entry.stateKey].lastReward = rewardPct
+    }
+    acc[entry.stateKey].lastTs = entry.ts ?? acc[entry.stateKey].lastTs
+    return acc
+  }, {})
+
+  const topStates = Object.entries(table)
+    .map(([stateKey, state]) => {
+      const stats = rewardsByState[stateKey] || { totalReward: 0, count: 0, lastReward: null, lastTs: null }
+      const qSubscribe = Number(state[ACTION_SUBSCRIBE] || 0)
+      const qSkip = Number(state[ACTION_SKIP] || 0)
+      return {
+        stateKey,
+        qSubscribe,
+        qSkip,
+        samples: Number(state.nSubscribe || 0),
+        avgReward: stats.count ? stats.totalReward / stats.count : 0,
+        lastReward: stats.lastReward,
+        lastTs: stats.lastTs,
+        edge: qSubscribe - qSkip,
+      }
+    })
+    .sort((a, b) => {
+      if (b.samples !== a.samples) return b.samples - a.samples
+      return b.edge - a.edge
+    })
+    .slice(0, 8)
+
+  const recentExperiences = logs
+    .slice(-10)
+    .reverse()
+    .map((entry) => ({
+      ts: entry.ts ?? null,
+      stateKey: entry.stateKey,
+      rewardPct: Number(entry.rewardPct),
+      qSubscribe: Number(entry.qSubscribe || 0),
+      qSkip: Number(entry.qSkip || 0),
+      meta: entry.meta || null,
+    }))
+
+  return {
+    metrics: getDualRlMetrics(),
+    topStates,
+    recentExperiences,
+  }
+}
+
 export function resetDualRl() {
   if (typeof localStorage === 'undefined') return
   localStorage.removeItem(LS_RL_Q_TABLE)

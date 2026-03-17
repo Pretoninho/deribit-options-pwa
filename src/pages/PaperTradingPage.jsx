@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getATMIV, getSpot } from '../utils/api.js'
-import { evaluateDualPolicy, getDualRlMetrics, learnFromSettlement, resetDualRl } from '../utils/rlDual.js'
+import { evaluateDualPolicy, getDualRlMetrics, getDualRlSnapshot, learnFromSettlement, resetDualRl } from '../utils/rlDual.js'
 
 const LS_DI_POSITIONS = 'paper_di_positions'
 const LS_DI_BALANCES = 'paper_di_balances'
@@ -269,6 +269,7 @@ export default function PaperTradingPage({ onBack, prefillTrade }) {
 
   const [showTradeModal, setShowTradeModal] = useState(false)
   const [rlMetrics, setRlMetrics] = useState(() => getDualRlMetrics())
+  const [rlSnapshot, setRlSnapshot] = useState(() => getDualRlSnapshot())
   const [tradeForm, setTradeForm] = useState({
     asset: 'BTC',
     side: 'buy-low',
@@ -444,6 +445,7 @@ export default function PaperTradingPage({ onBack, prefillTrade }) {
     if (!window.confirm('Reinitialiser le dataset RL local ?')) return
     resetDualRl()
     setRlMetrics(getDualRlMetrics())
+    setRlSnapshot(getDualRlSnapshot())
   }
 
   const executeTrade = () => {
@@ -573,6 +575,7 @@ export default function PaperTradingPage({ onBack, prefillTrade }) {
         },
       })
       setRlMetrics(getDualRlMetrics())
+      setRlSnapshot(getDualRlSnapshot())
     }
   }
 
@@ -624,6 +627,63 @@ export default function PaperTradingPage({ onBack, prefillTrade }) {
               <div style={{ color: 'var(--text-muted)' }}>Experiences: <span style={{ color: 'var(--text)' }}>{rlMetrics.experiences}</span></div>
               <div style={{ color: 'var(--text-muted)' }}>Reward moy: <span style={{ color: rlMetrics.avgReward >= 0 ? 'var(--call)' : 'var(--put)' }}>{formatNum(rlMetrics.avgReward, 2)}%</span></div>
             </div>
+            {rlMetrics.lastTs && (
+              <div style={{ marginTop: 6, fontSize: 10, color: 'var(--text-muted)' }}>
+                Dernier apprentissage: {formatDate(rlMetrics.lastTs)} {formatTime(rlMetrics.lastTs)}
+              </div>
+            )}
+          </div>
+
+          <div className="card" style={{ padding: '10px 12px', marginBottom: 12 }}>
+            <div style={{ fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 13, color: 'var(--text)', marginBottom: 10 }}>Analyse RL</div>
+
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 6 }}>Top etats appris</div>
+            {rlSnapshot.topStates.length === 0 ? (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 12 }}>Aucune experience enregistree pour le moment.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+                {rlSnapshot.topStates.map((state) => (
+                  <div key={state.stateKey} style={{ background: 'rgba(255,255,255,.03)', borderRadius: 8, padding: '8px 10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 3 }}>
+                      <span style={{ fontSize: 10, color: 'var(--text)', wordBreak: 'break-all' }}>{state.stateKey}</span>
+                      <span style={{ fontSize: 10, color: state.edge >= 0 ? 'var(--call)' : 'var(--put)', whiteSpace: 'nowrap' }}>
+                        edge {state.edge >= 0 ? '+' : ''}{formatNum(state.edge, 2)}
+                      </span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, fontSize: 10 }}>
+                      <div style={{ color: 'var(--text-muted)' }}>Samples: <span style={{ color: 'var(--text)' }}>{state.samples}</span></div>
+                      <div style={{ color: 'var(--text-muted)' }}>Avg: <span style={{ color: state.avgReward >= 0 ? 'var(--call)' : 'var(--put)' }}>{formatNum(state.avgReward, 2)}%</span></div>
+                      <div style={{ color: 'var(--text-muted)' }}>Dernier: <span style={{ color: state.lastReward >= 0 ? 'var(--call)' : 'var(--put)' }}>{state.lastReward != null ? `${formatNum(state.lastReward, 2)}%` : '—'}</span></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 6 }}>Experiences recentes</div>
+            {rlSnapshot.recentExperiences.length === 0 ? (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Le tableau se remplira apres les premiers settlements.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {rlSnapshot.recentExperiences.map((entry) => (
+                  <div key={`${entry.ts}-${entry.stateKey}`} style={{ background: 'rgba(255,255,255,.03)', borderRadius: 8, padding: '8px 10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{formatDate(entry.ts)} {formatTime(entry.ts)}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: entry.rewardPct >= 0 ? 'var(--call)' : 'var(--put)' }}>
+                        {entry.rewardPct >= 0 ? '+' : ''}{formatNum(entry.rewardPct, 2)}%
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--text)' }}>{entry.stateKey}</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4, fontSize: 10 }}>
+                      <div style={{ color: 'var(--text-muted)' }}>Trade: <span style={{ color: 'var(--text)' }}>{entry.meta?.asset || '—'} {entry.meta?.side || ''}</span></div>
+                      <div style={{ color: 'var(--text-muted)' }}>Net: <span style={{ color: (entry.meta?.netPnlUsd ?? 0) >= 0 ? 'var(--call)' : 'var(--put)' }}>{entry.meta?.netPnlUsd != null ? `${formatNum(entry.meta.netPnlUsd, 2)} USD` : '—'}</span></div>
+                      <div style={{ color: 'var(--text-muted)' }}>Exerce: <span style={{ color: entry.meta?.exercised ? 'var(--put)' : 'var(--call)' }}>{entry.meta?.exercised ? 'Oui' : 'Non'}</span></div>
+                      <div style={{ color: 'var(--text-muted)' }}>Q: <span style={{ color: 'var(--text)' }}>{formatNum(entry.qSubscribe, 2)} / {formatNum(entry.qSkip, 2)}</span></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>

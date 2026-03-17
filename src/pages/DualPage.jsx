@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { getATMIV, getSpot } from '../utils/api.js'
 import { calcPremiumNative, calcPremiumUSD, marketPremiumPct, diScore, scoreLabel, calcPnL, calcDays, countdown, fmtUSD, fmtStrike, fmtExpiry, fmtDuration } from '../utils/di.js'
+import { evaluateDualPolicy } from '../utils/rlDual.js'
 
 const SCORE_COLORS = { great: 'var(--call)', good: 'var(--atm)', fair: 'var(--accent2)', poor: 'var(--put)' }
 
@@ -55,6 +56,7 @@ export default function DualPage() {
     return qty // USDC direct
   }
   const amountUSD = getAmountUSD(form.type, form.asset, form.quantity, dcaForForm, spots[form.asset])
+  const formSpot = spots[form.asset] ?? null
 
   // Prime prévisualisée
   const previewPrimeNative = formDays && form.rate && form.quantity
@@ -63,6 +65,23 @@ export default function DualPage() {
   const previewPrimeUSD = formDays && form.rate && amountUSD
     ? calcPremiumNative(parseFloat(form.rate), formDays, parseFloat(form.quantity)) * parseFloat(form.strike)
     : null
+
+  const liveRlEval = useMemo(() => {
+    const strike = parseFloat(form.strike)
+    const apr = parseFloat(form.rate)
+    const distPct = formSpot && Number.isFinite(strike) && strike > 0
+      ? ((strike - formSpot) / formSpot) * 100
+      : null
+
+    return evaluateDualPolicy({
+      asset: form.asset,
+      side: form.type,
+      days: formDays,
+      apr,
+      distPct,
+      iv: ivCache[form.asset]?.iv ?? null,
+    })
+  }, [form.asset, form.type, form.strike, form.rate, formDays, formSpot, ivCache])
 
   useEffect(() => {
     const assets = [...new Set(offers.map(o => o.asset))]
@@ -82,6 +101,22 @@ export default function DualPage() {
       })
     } catch(e) { console.warn('IV fetch error:', e.message) }
   }, [])
+
+  const fetchSpot = useCallback(async (asset) => {
+    try {
+      const spot = await getSpot(asset)
+      setSpots(prev => ({ ...prev, [asset]: spot }))
+    } catch(e) { console.warn('Spot fetch error:', e.message) }
+  }, [])
+
+  useEffect(() => {
+    const cached = ivCache[form.asset]
+    if (!cached || Date.now() - cached.fetchedAt > 300000) fetchIV(form.asset)
+  }, [fetchIV, form.asset, ivCache])
+
+  useEffect(() => {
+    if (!spots[form.asset]) fetchSpot(form.asset)
+  }, [fetchSpot, form.asset, spots])
 
   const fetchAllIV = async () => {
     setLoading(true)
@@ -301,6 +336,26 @@ export default function DualPage() {
                   const { label, cls } = scoreLabel(ratio)
                   return ratio != null ? <span style={{ color:SCORE_COLORS[cls], fontWeight:700 }}>{label} ({(ratio*100).toFixed(0)}%)</span> : null
                 })()}
+              </div>
+            )}
+
+            {(formDays || form.rate || form.strike) && (
+              <div style={{ background:'rgba(0,212,255,.06)', border:'1px solid rgba(0,212,255,.18)', borderRadius:8, padding:'10px 12px' }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:8, marginBottom:6 }}>
+                  <div style={{ fontSize:10, color:'var(--text-muted)', letterSpacing:'1px', textTransform:'uppercase' }}>Diagnostic RL</div>
+                  <div style={{ color:liveRlEval.action==='subscribe' ? 'var(--call)' : 'var(--put)', fontFamily:'var(--sans)', fontWeight:800, fontSize:13 }}>
+                    {liveRlEval.action==='subscribe' ? 'GO' : 'WAIT'}
+                  </div>
+                </div>
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, fontSize:11 }}>
+                  <div style={{ color:'var(--text-muted)' }}>Confiance: <span style={{ color:'var(--text)' }}>{liveRlEval.confidence}%</span></div>
+                  <div style={{ color:'var(--text-muted)' }}>IV utilisee: <span style={{ color:'var(--accent)' }}>{liveRlEval.iv != null ? `${liveRlEval.iv.toFixed(2)}%` : '—'}</span></div>
+                  <div style={{ color:'var(--text-muted)' }}>Filtre IV: <span style={{ color:liveRlEval.highIvCondition ? 'var(--call)' : 'var(--put)' }}>{liveRlEval.highIvCondition ? 'OK' : `Mini ${liveRlEval.ivFloor}%`}</span></div>
+                  <div style={{ color:'var(--text-muted)' }}>Spot: <span style={{ color:'var(--text)' }}>{formSpot ? fmtUSD(formSpot) : '—'}</span></div>
+                </div>
+                <div style={{ fontSize:10, color:'var(--text-muted)', marginTop:6 }}>
+                  Etat: <span style={{ color:'var(--text)' }}>{liveRlEval.stateKey}</span>
+                </div>
               </div>
             )}
 
