@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getSpot } from '../utils/api.js'
+import { getATMIV, getSpot } from '../utils/api.js'
 import { evaluateDualPolicy, getDualRlMetrics, learnFromSettlement, resetDualRl } from '../utils/rlDual.js'
 
 const LS_DI_POSITIONS = 'paper_di_positions'
@@ -244,6 +244,7 @@ function PerformanceChart({ points }) {
 export default function PaperTradingPage({ onBack, prefillTrade }) {
   const [asset, setAsset] = useState('BTC')
   const [spots, setSpots] = useState({ BTC: null, ETH: null })
+  const [marketIvByAsset, setMarketIvByAsset] = useState({ BTC: null, ETH: null })
   const [balances, setBalances] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem(LS_DI_BALANCES) || JSON.stringify(INITIAL_BALANCES))
@@ -276,6 +277,7 @@ export default function PaperTradingPage({ onBack, prefillTrade }) {
     apr: '',
     quantityAsset: MIN_LOT.BTC,
     days: '',
+    iv: '',
     rlStateKey: null,
     rlAction: null,
     rlConfidence: null,
@@ -289,11 +291,29 @@ export default function PaperTradingPage({ onBack, prefillTrade }) {
     setSpots({ BTC: btc, ETH: eth })
   }
 
+  const loadMarketIv = async (targetAsset) => {
+    if (!targetAsset) return
+    try {
+      const data = await getATMIV(targetAsset)
+      setMarketIvByAsset((prev) => ({ ...prev, [targetAsset]: data }))
+    } catch {
+      setMarketIvByAsset((prev) => ({ ...prev, [targetAsset]: null }))
+    }
+  }
+
   useEffect(() => {
     loadSpots()
     const id = setInterval(loadSpots, 20000)
     return () => clearInterval(id)
   }, [])
+
+  useEffect(() => {
+    loadMarketIv(asset)
+  }, [asset])
+
+  useEffect(() => {
+    loadMarketIv(tradeForm.asset)
+  }, [tradeForm.asset])
 
   useEffect(() => {
     localStorage.setItem(LS_DI_BALANCES, JSON.stringify(balances))
@@ -323,6 +343,7 @@ export default function PaperTradingPage({ onBack, prefillTrade }) {
       apr: prefillTrade.apr ? Number(prefillTrade.apr).toFixed(2) : '',
       quantityAsset: minLot,
       days: prefillTrade.days ? Number(prefillTrade.days).toFixed(2) : (prefillTrade.expiryTs ? calcDaysToExpiry(prefillTrade.expiryTs).toFixed(2) : ''),
+      iv: prefillTrade.iv != null ? Number(prefillTrade.iv).toFixed(2) : '',
       rlStateKey: prefillTrade.rlStateKey ?? null,
       rlAction: prefillTrade.rlAction ?? null,
       rlConfidence: prefillTrade.rlConfidence ?? null,
@@ -337,6 +358,31 @@ export default function PaperTradingPage({ onBack, prefillTrade }) {
       days,
     })
   }, [tradeForm])
+
+  const tradeSpot = spots[tradeForm.asset]
+  const tradeIv = useMemo(() => {
+    const explicitIv = Number(tradeForm.iv)
+    if (Number.isFinite(explicitIv) && explicitIv > 0) return explicitIv
+    return marketIvByAsset[tradeForm.asset]?.iv ?? null
+  }, [marketIvByAsset, tradeForm.asset, tradeForm.iv])
+
+  const liveRlEval = useMemo(() => {
+    const strike = Number(tradeForm.strike)
+    const apr = Number(tradeForm.apr)
+    const days = Number(tradeForm.days) || calcDaysToExpiry(Number(tradeForm.expiryTs))
+    const distPct = tradeSpot && Number.isFinite(strike) && strike > 0
+      ? ((strike - tradeSpot) / tradeSpot) * 100
+      : null
+
+    return evaluateDualPolicy({
+      asset: tradeForm.asset,
+      side: tradeForm.side,
+      days,
+      apr,
+      distPct,
+      iv: tradeIv,
+    })
+  }, [tradeForm, tradeIv, tradeSpot])
 
   const lockedSummary = useMemo(() => {
     return positions.reduce((acc, pos) => {
@@ -386,6 +432,7 @@ export default function PaperTradingPage({ onBack, prefillTrade }) {
       side: prev.side || 'buy-low',
       quantityAsset: MIN_LOT[baseAsset] ?? 0.01,
       days: prev.days || '7',
+      iv: marketIvByAsset[baseAsset]?.iv != null ? Number(marketIvByAsset[baseAsset].iv).toFixed(2) : '',
       rlStateKey: null,
       rlAction: null,
       rlConfidence: null,
@@ -433,16 +480,17 @@ export default function PaperTradingPage({ onBack, prefillTrade }) {
     const now = Date.now()
     const spotNow = spots[tradeForm.asset]
     const distPct = spotNow ? ((strike - spotNow) / spotNow) * 100 : null
-    const rlEval = tradeForm.rlStateKey
-      ? { stateKey: tradeForm.rlStateKey, action: tradeForm.rlAction, confidence: tradeForm.rlConfidence }
-      : evaluateDualPolicy({
-        asset: tradeForm.asset,
-        side: preview.side,
-        days,
-        apr,
-        distPct,
-        iv: null,
-      })
+    const resolvedIv = Number.isFinite(Number(tradeForm.iv)) && Number(tradeForm.iv) > 0
+      ? Number(tradeForm.iv)
+      : (marketIvByAsset[tradeForm.asset]?.iv ?? null)
+    const rlEval = evaluateDualPolicy({
+      asset: tradeForm.asset,
+      side: preview.side,
+      days,
+      apr,
+      distPct,
+      iv: resolvedIv,
+    })
 
     const position = {
       id: now,
@@ -460,6 +508,7 @@ export default function PaperTradingPage({ onBack, prefillTrade }) {
       periodRate: preview.periodRate,
       entrySpot: spots[tradeForm.asset],
       entryTs: now,
+      entryIv: resolvedIv,
       rlStateKey: rlEval?.stateKey ?? null,
       rlAction: rlEval?.action ?? null,
       rlConfidence: rlEval?.confidence ?? null,
@@ -674,8 +723,8 @@ export default function PaperTradingPage({ onBack, prefillTrade }) {
                 </div>
 
                 <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-                  <button className={`asset-btn${tradeForm.asset === 'BTC' ? ' active-btc' : ''}`} onClick={() => setTradeForm((p) => ({ ...p, asset: 'BTC', quantityAsset: Math.max(Number(p.quantityAsset) || 0, MIN_LOT.BTC) }))}>BTC</button>
-                  <button className={`asset-btn${tradeForm.asset === 'ETH' ? ' active-eth' : ''}`} onClick={() => setTradeForm((p) => ({ ...p, asset: 'ETH', quantityAsset: Math.max(Number(p.quantityAsset) || 0, MIN_LOT.ETH) }))}>ETH</button>
+                  <button className={`asset-btn${tradeForm.asset === 'BTC' ? ' active-btc' : ''}`} onClick={() => setTradeForm((p) => ({ ...p, asset: 'BTC', quantityAsset: Math.max(Number(p.quantityAsset) || 0, MIN_LOT.BTC), iv: '', rlStateKey: null, rlAction: null, rlConfidence: null }))}>BTC</button>
+                  <button className={`asset-btn${tradeForm.asset === 'ETH' ? ' active-eth' : ''}`} onClick={() => setTradeForm((p) => ({ ...p, asset: 'ETH', quantityAsset: Math.max(Number(p.quantityAsset) || 0, MIN_LOT.ETH), iv: '', rlStateKey: null, rlAction: null, rlConfidence: null }))}>ETH</button>
                 </div>
 
                 <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
@@ -702,15 +751,34 @@ export default function PaperTradingPage({ onBack, prefillTrade }) {
                   />
                 </div>
 
+                <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <input type="number" step="0.01" placeholder="IV % (optionnel)" value={tradeForm.iv}
+                    onChange={(e) => setTradeForm((p) => ({ ...p, iv: e.target.value, rlStateKey: null, rlAction: null, rlConfidence: null }))}
+                    style={{ width: '100%', padding: 9, borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}
+                  />
+                  <div style={{ display: 'flex', alignItems: 'center', padding: '0 10px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-muted)', fontSize: 10 }}>
+                    IV marche ATM: {marketIvByAsset[tradeForm.asset]?.iv != null ? `${formatNum(marketIvByAsset[tradeForm.asset].iv, 2)}%` : 'indisponible'}
+                  </div>
+                </div>
+
                 <div style={{ marginTop: 8, fontSize: 10, color: 'var(--text-muted)' }}>
-                  RL state: {tradeForm.rlStateKey || evaluateDualPolicy({
-                    asset: tradeForm.asset,
-                    side: tradeForm.side,
-                    days: Number(tradeForm.days),
-                    apr: Number(tradeForm.apr),
-                    distPct: currentSpot && Number(tradeForm.strike) ? ((Number(tradeForm.strike) - currentSpot) / currentSpot) * 100 : null,
-                    iv: null,
-                  }).stateKey}
+                  RL state: {liveRlEval.stateKey}
+                </div>
+
+                <div style={{ marginTop: 8, background: liveRlEval.action === 'subscribe' ? 'rgba(0,229,160,.08)' : 'rgba(255,255,255,.04)', border: `1px solid ${liveRlEval.action === 'subscribe' ? 'rgba(0,229,160,.22)' : 'var(--border)'}`, borderRadius: 9, padding: '10px 12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: liveRlEval.action === 'subscribe' ? 'var(--call)' : 'var(--text)' }}>
+                      RL {liveRlEval.action === 'subscribe' ? 'GO' : 'WAIT'} {liveRlEval.confidence}%
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                      IV utilisee: {tradeIv != null ? `${formatNum(tradeIv, 2)}%` : 'manquante'}
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 4, fontSize: 10, color: 'var(--text-muted)' }}>
+                    {liveRlEval.highIvCondition
+                      ? `Filtre IV valide (seuil ${liveRlEval.ivFloor}%).`
+                      : `Filtre IV non valide: seuil ${liveRlEval.ivFloor}%, IV actuelle ${tradeIv != null ? formatNum(tradeIv, 2) : '—'}%.`}
+                  </div>
                 </div>
 
                 {tradeForm.expiryTs ? (
