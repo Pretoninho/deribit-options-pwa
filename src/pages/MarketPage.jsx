@@ -1,8 +1,28 @@
-import { useState, useEffect } from 'react'
-import { getSpot, getFutures, getFuturePrice, getFundingRate } from '../utils/api.js'
+/**
+ * MarketPage — Vue marché multi-exchange
+ *
+ * Affiche les prix spot de toutes les plateformes côte à côte,
+ * puis les futures Deribit avec basis.
+ */
+import { useState, useEffect, useRef } from 'react'
+import { dataCore } from '../data_core/index.js'
+import * as deribit from '../data_core/providers/deribit.js'
+import * as binance from '../data_core/providers/binance.js'
+import * as coinbase from '../data_core/providers/coinbase.js'
+import { dataStore, CacheKey } from '../data_core/data_store/cache.js'
 
-function daysUntil(ts) {
-  return Math.max(1, Math.round((ts - Date.now()) / 86400000))
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function fmtPrice(n, asset) {
+  if (!Number.isFinite(n)) return '—'
+  return '$' + n.toLocaleString('en-US', { maximumFractionDigits: asset === 'ETH' ? 2 : 0 })
+}
+
+function fmtVol(n) {
+  if (!Number.isFinite(n) || n === 0) return '—'
+  if (n >= 1e9) return '$' + (n / 1e9).toFixed(1) + 'B'
+  if (n >= 1e6) return '$' + (n / 1e6).toFixed(0) + 'M'
+  return '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 })
 }
 
 function fmtExpiry(ts) {
@@ -11,86 +31,174 @@ function fmtExpiry(ts) {
   }).toUpperCase()
 }
 
-function fmtPrice(n, asset) {
-  if (!Number.isFinite(n)) return '—'
-  return '$' + n.toLocaleString('en-US', {
-    maximumFractionDigits: asset === 'ETH' ? 2 : 0,
-  })
+function daysUntil(ts) {
+  return Math.max(1, Math.round((ts - Date.now()) / 86400000))
 }
 
-function MetricCard({ label, value, sub, color }) {
+function pctColor(v) {
+  if (!Number.isFinite(v)) return 'var(--text-muted)'
+  if (v > 0) return 'var(--call)'
+  if (v < 0) return 'var(--put)'
+  return 'var(--text-muted)'
+}
+
+// ── Sous-composants ───────────────────────────────────────────────────────────
+
+function SectionTitle({ children }) {
   return (
     <div style={{
-      background: 'var(--surface)', border: '1px solid var(--border)',
-      borderRadius: 12, padding: '14px 16px',
+      fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--sans)',
+      fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase',
+      marginBottom: 8, marginTop: 20,
     }}>
-      <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--sans)', fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 6 }}>
-        {label}
-      </div>
-      <div style={{ fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 20, color: color || 'var(--text)' }}>
-        {value}
-      </div>
-      {sub && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>{sub}</div>}
+      {children}
     </div>
   )
 }
 
+function ExchangeRow({ name, color, price, asset, bid, ask, volume24h, change24h }) {
+  const spread = (bid && ask) ? ((ask - bid) / ask * 100) : null
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: '80px 1fr 1fr 1fr',
+      alignItems: 'center', gap: 6, padding: '10px 16px',
+      borderBottom: '1px solid rgba(255,255,255,.04)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0 }} />
+        <span style={{ fontSize: 11, fontFamily: 'var(--sans)', fontWeight: 700, color: 'var(--text)' }}>
+          {name}
+        </span>
+      </div>
+      <div style={{ textAlign: 'right' }}>
+        <div style={{ fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 14, color: 'var(--text)' }}>
+          {fmtPrice(price, asset)}
+        </div>
+        {Number.isFinite(change24h) && (
+          <div style={{ fontSize: 9, color: pctColor(change24h), fontWeight: 700 }}>
+            {change24h > 0 ? '+' : ''}{change24h.toFixed(2)}%
+          </div>
+        )}
+      </div>
+      <div style={{ textAlign: 'right' }}>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          {fmtVol(volume24h)}
+        </div>
+        {spread != null && (
+          <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>
+            spread {spread.toFixed(3)}%
+          </div>
+        )}
+      </div>
+      <div style={{ textAlign: 'right' }}>
+        {bid && ask ? (
+          <div style={{ fontSize: 9, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+            <span style={{ color: 'var(--call)' }}>{fmtPrice(bid, asset)}</span>
+            {' / '}
+            <span style={{ color: 'var(--put)' }}>{fmtPrice(ask, asset)}</span>
+          </div>
+        ) : (
+          <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>—</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Page principale ───────────────────────────────────────────────────────────
+
 export default function MarketPage({ asset }) {
-  const [spot, setSpot] = useState(null)
-  const [rows, setRows] = useState([])
-  const [funding, setFunding] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
+  const [spots, setSpots]       = useState({})
+  const [futures, setFutures]   = useState([])
+  const [loading, setLoading]   = useState(false)
   const [lastUpdate, setLastUpdate] = useState(null)
+  const isMounted = useRef(true)
 
   useEffect(() => {
+    isMounted.current = true
     load()
+    // Rafraîchissement auto toutes les 10s
+    const timer = setInterval(() => { if (isMounted.current) load() }, 10_000)
+    return () => { isMounted.current = false; clearInterval(timer) }
   }, [asset])
 
   const load = async () => {
     setLoading(true)
-    setError(null)
     try {
-      const [sp, futures, fundingData] = await Promise.all([
-        getSpot(asset),
-        getFutures(asset),
-        getFundingRate(asset).catch(() => null),
+      // Spots multi-exchange en parallèle
+      const [dSpot, bSpot, cSpot] = await Promise.allSettled([
+        deribit.getSpot(asset),
+        binance.getSpot(asset),
+        coinbase.getSpot(asset),
       ])
-      setSpot(sp)
-      setFunding(fundingData)
 
-      const built = []
-      await Promise.all(futures.map(async f => {
+      // Binance: récupère change 24h via ticker
+      const bTicker24h = await binance.getSpot(asset).catch(() => null)
+
+      if (isMounted.current) {
+        setSpots({
+          deribit:  dSpot.status  === 'fulfilled' ? dSpot.value  : null,
+          binance:  bSpot.status  === 'fulfilled' ? bSpot.value  : null,
+          coinbase: cSpot.status  === 'fulfilled' ? cSpot.value  : null,
+        })
+      }
+
+      // Futures Deribit
+      const instruments = await deribit.getInstruments(asset, 'future')
+      const futureRows = []
+      const spotPrice = dSpot.status === 'fulfilled' ? dSpot.value?.price : null
+
+      await Promise.all(instruments.slice(0, 10).map(async f => {
         try {
-          const price = await getFuturePrice(f.instrument_name)
-          if (!price) return
+          const ticker = await deribit.getTicker(f.instrument_name)
+          if (!ticker?.price) return
           const isPerp = f.instrument_name.includes('PERPETUAL')
           const days = isPerp ? null : daysUntil(f.expiration_timestamp)
-          const basis = sp ? (price - sp) / sp * 100 : null
+          const basis = spotPrice ? (ticker.price - spotPrice) / spotPrice * 100 : null
           const basisAnn = (!isPerp && basis != null && days) ? basis / days * 365 : null
-          built.push({
-            name: f.instrument_name,
-            expiry: isPerp ? 'PERP' : fmtExpiry(f.expiration_timestamp),
-            price, days, basis, basisAnn, isPerp,
+          futureRows.push({
+            name:     f.instrument_name,
+            expiry:   isPerp ? 'PERP' : fmtExpiry(f.expiration_timestamp),
+            expiryTs: isPerp ? 0 : f.expiration_timestamp,
+            price:    ticker.price,
+            days, basis, basisAnn, isPerp,
           })
         } catch (_) {}
       }))
 
-      built.sort((a, b) => (a.days || 9999) - (b.days || 9999))
-      setRows(built)
-      setLastUpdate(new Date())
-    } catch (e) {
-      setError(e.message)
-    }
-    setLoading(false)
+      futureRows.sort((a, b) => {
+        if (a.isPerp) return -1
+        if (b.isPerp) return 1
+        return a.days - b.days
+      })
+
+      if (isMounted.current) {
+        setFutures(futureRows)
+        setLastUpdate(new Date())
+      }
+    } catch (_) {}
+    if (isMounted.current) setLoading(false)
   }
 
-  // Derived metrics for cards
-  const nearest = rows.find(r => !r.isPerp)
-  const perp = rows.find(r => r.isPerp)
-  const bestBasisAnn = rows
+  // VWAP multi-exchange
+  const spotPrices  = Object.values(spots).filter(s => s?.price != null)
+  const vwap        = spotPrices.length > 0
+    ? spotPrices.reduce((s, t) => s + t.price, 0) / spotPrices.length
+    : null
+  const deribitSpot = spots.deribit?.price
+  const binanceSpot = spots.binance?.price
+  const coinbaseSpot = spots.coinbase?.price
+
+  const binanceVol  = spots.binance?.volume24h
+  const coinbaseVol = spots.coinbase?.volume24h
+  const binanceRaw  = spots.binance?.raw
+  const change24h   = binanceRaw?.priceChangePercent != null ? Number(binanceRaw.priceChangePercent) : null
+
+  const bestBasisAnn = futures
     .filter(r => !r.isPerp && r.basisAnn != null)
     .reduce((best, r) => (best == null || r.basisAnn > best ? r.basisAnn : best), null)
+  const nearest = futures.find(r => !r.isPerp)
+  const perp    = futures.find(r => r.isPerp)
 
   return (
     <div className="page-wrap">
@@ -99,148 +207,150 @@ export default function MarketPage({ asset }) {
         <div className="page-title">Market <span>{asset}</span></div>
         <div className="status-row">
           {loading && <div className="dot-live" />}
-          <button
-            onClick={load}
-            disabled={loading}
-            style={{
-              background: 'none', border: '1px solid var(--border)', borderRadius: 8,
-              color: 'var(--text-muted)', fontSize: 11, padding: '4px 10px', cursor: 'pointer',
-              fontFamily: 'var(--sans)', fontWeight: 600,
-            }}
-          >
+          <button onClick={load} disabled={loading} style={{
+            background: 'none', border: '1px solid var(--border)', borderRadius: 8,
+            color: 'var(--text-muted)', fontSize: 11, padding: '4px 10px', cursor: 'pointer',
+            fontFamily: 'var(--sans)', fontWeight: 600,
+          }}>
             {loading ? '...' : 'Refresh'}
           </button>
         </div>
       </div>
 
-      {error && (
-        <div style={{ background: 'rgba(255,77,109,.1)', border: '1px solid rgba(255,77,109,.3)', borderRadius: 10, padding: '10px 14px', marginBottom: 16, fontSize: 12, color: 'var(--put)' }}>
-          {error}
+      {/* Cards résumé */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 4 }}>
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 16px' }}>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--sans)', fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 6 }}>VWAP {asset}</div>
+          <div style={{ fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 20, color: 'var(--accent)' }}>{fmtPrice(vwap, asset)}</div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>{spotPrices.length} exchange{spotPrices.length > 1 ? 's' : ''}</div>
         </div>
-      )}
-
-      {/* Metric cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 20 }}>
-        <MetricCard
-          label={`Spot ${asset}`}
-          value={spot ? fmtPrice(spot, asset) : '—'}
-          color="var(--accent)"
-        />
-        <MetricCard
-          label="Future proche"
-          value={nearest ? fmtPrice(nearest.price, asset) : '—'}
-          sub={nearest ? `${nearest.expiry} · ${nearest.days}j` : null}
-          color="var(--atm)"
-        />
-        <MetricCard
-          label="Funding Perp"
-          value={funding?.current != null ? (funding.current > 0 ? '+' : '') + funding.current.toFixed(2) + '%' : '—'}
-          sub={funding ? '/an' : null}
-          color={funding?.current > 0 ? 'var(--call)' : funding?.current < 0 ? 'var(--put)' : 'var(--text-muted)'}
-        />
-        <MetricCard
-          label="Basis max ann."
-          value={bestBasisAnn != null ? (bestBasisAnn > 0 ? '+' : '') + bestBasisAnn.toFixed(2) + '%' : '—'}
-          sub="Meilleure échéance"
-          color={bestBasisAnn > 3 ? 'var(--call)' : bestBasisAnn > 0 ? 'var(--atm)' : 'var(--put)'}
-        />
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 16px' }}>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--sans)', fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 6 }}>24h Change</div>
+          <div style={{ fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 20, color: pctColor(change24h) }}>
+            {change24h != null ? (change24h > 0 ? '+' : '') + change24h.toFixed(2) + '%' : '—'}
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>Binance 24h</div>
+        </div>
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 16px' }}>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--sans)', fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 6 }}>Future proche</div>
+          <div style={{ fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 20, color: 'var(--atm)' }}>
+            {nearest ? fmtPrice(nearest.price, asset) : '—'}
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>
+            {nearest ? `${nearest.expiry} · ${nearest.days}j` : 'Deribit'}
+          </div>
+        </div>
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 16px' }}>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--sans)', fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 6 }}>Basis max /an</div>
+          <div style={{ fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 20, color: bestBasisAnn > 3 ? 'var(--call)' : bestBasisAnn > 0 ? 'var(--atm)' : 'var(--text-muted)' }}>
+            {bestBasisAnn != null ? (bestBasisAnn > 0 ? '+' : '') + bestBasisAnn.toFixed(2) + '%' : '—'}
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>Meilleure échéance</div>
+        </div>
       </div>
 
-      {/* Funding detail */}
-      {funding && (
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 16px', marginBottom: 16 }}>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--sans)', fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 10 }}>
-            Funding Rate — {asset}-PERPETUAL
-          </div>
-          <div style={{ display: 'flex', gap: 16 }}>
-            <div>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Actuel</div>
-              <div style={{ fontFamily: 'var(--sans)', fontWeight: 700, fontSize: 15, color: funding.current > 0 ? 'var(--call)' : 'var(--put)' }}>
-                {(funding.current > 0 ? '+' : '') + funding.current.toFixed(2)}%/an
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Moy 7j</div>
-              <div style={{ fontFamily: 'var(--sans)', fontWeight: 700, fontSize: 15, color: funding.avgAnn7d > 0 ? 'var(--call)' : 'var(--put)' }}>
-                {(funding.avgAnn7d > 0 ? '+' : '') + (funding.avgAnn7d ?? 0).toFixed(2)}%/an
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Sentiment</div>
-              <div style={{ fontFamily: 'var(--sans)', fontWeight: 700, fontSize: 13, color: funding.bullish ? 'var(--call)' : 'var(--put)' }}>
-                {funding.bullish ? 'Haussier' : 'Baissier'}
-              </div>
-            </div>
-          </div>
+      {/* Spot multi-exchange */}
+      <SectionTitle>Spot — Comparaison exchanges</SectionTitle>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', marginBottom: 4 }}>
+        {/* Header colonnes */}
+        <div style={{
+          display: 'grid', gridTemplateColumns: '80px 1fr 1fr 1fr',
+          gap: 6, padding: '8px 16px',
+          background: 'rgba(255,255,255,.02)', borderBottom: '1px solid var(--border)',
+        }}>
+          {['Exchange', 'Prix', 'Volume 24h', 'Bid / Ask'].map((h, i) => (
+            <div key={h} style={{
+              fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--sans)',
+              fontWeight: 700, letterSpacing: '.5px', textTransform: 'uppercase',
+              textAlign: i === 0 ? 'left' : 'right',
+            }}>{h}</div>
+          ))}
         </div>
-      )}
+        <ExchangeRow
+          name="Deribit" color="var(--accent)"
+          price={deribitSpot} asset={asset}
+          bid={null} ask={null} volume24h={null}
+        />
+        <ExchangeRow
+          name="Binance" color="#F0B90B"
+          price={binanceSpot} asset={asset}
+          bid={spots.binance?.bid} ask={spots.binance?.ask}
+          volume24h={binanceVol}
+          change24h={change24h}
+        />
+        <ExchangeRow
+          name="Coinbase" color="#0052FF"
+          price={coinbaseSpot} asset={asset}
+          bid={spots.coinbase?.bid} ask={spots.coinbase?.ask}
+          volume24h={coinbaseVol}
+        />
+        {/* Spread Deribit↔Binance */}
+        {deribitSpot && binanceSpot && (
+          <div style={{ padding: '8px 16px', borderTop: '1px solid rgba(255,255,255,.04)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Deribit vs Binance</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: pctColor(deribitSpot - binanceSpot) }}>
+              {deribitSpot > binanceSpot ? '+' : ''}{((deribitSpot - binanceSpot) / binanceSpot * 100).toFixed(3)}%
+            </span>
+          </div>
+        )}
+      </div>
 
-      {/* Futures table */}
+      {/* Futures Deribit */}
+      <SectionTitle>Futures Deribit — Structure à terme</SectionTitle>
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--sans)', fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase' }}>
-            Contrats Futures
-          </div>
+        {/* Colonnes header */}
+        <div style={{
+          display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr',
+          gap: 4, padding: '8px 16px',
+          background: 'rgba(255,255,255,.02)', borderBottom: '1px solid var(--border)',
+        }}>
+          {['Échéance', 'Prix', 'Basis', 'Basis/an'].map((h, i) => (
+            <div key={h} style={{
+              fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--sans)',
+              fontWeight: 700, letterSpacing: '.5px', textTransform: 'uppercase',
+              textAlign: i === 0 ? 'left' : 'right',
+            }}>{h}</div>
+          ))}
         </div>
 
-        {rows.length === 0 && !loading && (
-          <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-            Appuie sur Refresh pour charger les données
+        {futures.length === 0 && !loading && (
+          <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+            Appuie sur Refresh
           </div>
         )}
 
-        {rows.map((r, i) => (
+        {futures.map((r, i) => (
           <div key={r.name} style={{
             display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr',
-            gap: 4, padding: '12px 16px', alignItems: 'center',
-            borderBottom: i < rows.length - 1 ? '1px solid rgba(255,255,255,.04)' : 'none',
+            gap: 4, padding: '11px 16px', alignItems: 'center',
+            borderBottom: i < futures.length - 1 ? '1px solid rgba(255,255,255,.04)' : 'none',
             background: r.isPerp ? 'rgba(0,212,255,.03)' : 'transparent',
           }}>
             <div>
               <div style={{ fontFamily: 'var(--mono, monospace)', fontSize: 11, color: r.isPerp ? 'var(--accent)' : 'var(--text)', fontWeight: 600 }}>
                 {r.expiry}
               </div>
-              {r.days && (
-                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{r.days}j</div>
-              )}
+              {r.days && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{r.days}j</div>}
             </div>
             <div style={{ fontFamily: 'var(--sans)', fontWeight: 700, fontSize: 13, color: 'var(--text)', textAlign: 'right' }}>
               {fmtPrice(r.price, asset)}
             </div>
             <div style={{ textAlign: 'right' }}>
-              {r.basis != null ? (
-                <span style={{ fontSize: 12, fontWeight: 700, color: r.basis > 0 ? 'var(--call)' : 'var(--put)' }}>
-                  {r.basis > 0 ? '+' : ''}{r.basis.toFixed(2)}%
-                </span>
-              ) : <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>—</span>}
+              {r.basis != null
+                ? <span style={{ fontSize: 12, fontWeight: 700, color: pctColor(r.basis) }}>{r.basis > 0 ? '+' : ''}{r.basis.toFixed(2)}%</span>
+                : <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>—</span>}
             </div>
             <div style={{ textAlign: 'right' }}>
-              {r.basisAnn != null ? (
-                <span style={{ fontSize: 12, fontWeight: 700, color: r.basisAnn > 5 ? 'var(--call)' : r.basisAnn > 0 ? 'var(--atm)' : 'var(--put)' }}>
-                  {r.basisAnn > 0 ? '+' : ''}{r.basisAnn.toFixed(1)}%/an
-                </span>
-              ) : <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>—</span>}
+              {r.basisAnn != null
+                ? <span style={{ fontSize: 12, fontWeight: 700, color: r.basisAnn > 5 ? 'var(--call)' : r.basisAnn > 0 ? 'var(--atm)' : 'var(--put)' }}>{r.basisAnn > 0 ? '+' : ''}{r.basisAnn.toFixed(1)}%/an</span>
+                : <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>—</span>}
             </div>
           </div>
         ))}
-
-        {/* Table header (at bottom as legend) */}
-        <div style={{
-          display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr',
-          gap: 4, padding: '8px 16px',
-          borderTop: '1px solid var(--border)',
-          background: 'rgba(255,255,255,.02)',
-        }}>
-          {['Échéance', 'Prix', 'Basis', 'Basis/an'].map(h => (
-            <div key={h} style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--sans)', fontWeight: 700, letterSpacing: '.5px', textTransform: 'uppercase', textAlign: h === 'Échéance' ? 'left' : 'right' }}>
-              {h}
-            </div>
-          ))}
-        </div>
       </div>
 
       {lastUpdate && (
-        <div style={{ textAlign: 'center', fontSize: 10, color: 'var(--text-muted)', opacity: .5, marginTop: 12 }}>
+        <div style={{ textAlign: 'center', fontSize: 10, color: 'var(--text-muted)', opacity: .5, marginTop: 12, marginBottom: 4 }}>
           Mis à jour {lastUpdate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </div>
       )}

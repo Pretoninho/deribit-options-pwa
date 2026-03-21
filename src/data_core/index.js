@@ -56,10 +56,19 @@ export {
   normalizeDeribitDVOL,
   normalizeDeribitFunding,
   normalizeDeribitOI,
+  normalizeDeribitFundingHistory,
+  normalizeDeribitDeliveryPrices,
+  normalizeDeribitTrades,
   // Binance
   normalizeBinanceTicker,
   normalizeBinanceFunding,
   normalizeBinanceOI,
+  normalizeBinancePremiumIndex,
+  normalizeBinanceSentiment,
+  normalizeBinanceTakerVolume,
+  normalizeBinanceLiquidations,
+  normalizeBinanceOptions,
+  normalizeBinanceOptionsOI,
   // Coinbase
   normalizeCoinbaseTicker,
   // Utilitaires
@@ -108,7 +117,7 @@ class DataCore {
     const {
       websocket = true,
       binance   = true,
-      coinbase  = false,
+      coinbase  = true,
     } = opts
 
     // 1. Chargement initial (snapshot REST)
@@ -120,6 +129,23 @@ class DataCore {
       await Promise.allSettled(
         list.map(asset => binanceProvider.getMarketSnapshot(asset))
       )
+      // Données supplémentaires au démarrage
+      await Promise.allSettled(
+        list.flatMap(asset => [
+          binanceProvider.getLongShortRatio(asset),
+          binanceProvider.getTakerVolume(asset),
+          binanceProvider.getLiquidations(asset),
+          binanceProvider.getOptionsChain(asset),
+          binanceProvider.getOptionsOI(asset),
+        ])
+      )
+      await Promise.allSettled(
+        list.flatMap(asset => [
+          deribitProvider.getFundingRateHistory(asset),
+          deribitProvider.getDeliveryPrices(asset),
+          deribitProvider.getLastTrades(asset),
+        ])
+      )
     }
 
     if (coinbase) {
@@ -128,59 +154,103 @@ class DataCore {
       )
     }
 
-    // 2. Polls de fond (données lentes)
+    // 2. Polls de fond
     list.forEach(asset => {
-      // DVOL toutes les minutes
-      this._stopFns.push(
-        pollToStore(
-          CacheKey.dvol('deribit', asset),
-          () => deribitProvider.getDVOL(asset),
-          PollInterval.NORMAL,
-          dataStore,
-        )
-      )
+      // ── Deribit ────────────────────────────────────────────────────────────
+      // Spot toutes les 5s
+      this._stopFns.push(pollToStore(
+        CacheKey.spot('deribit', asset),
+        () => deribitProvider.getSpot(asset),
+        PollInterval.REALTIME, dataStore,
+      ))
+      // DVOL toutes les 60s
+      this._stopFns.push(pollToStore(
+        CacheKey.dvol('deribit', asset),
+        () => deribitProvider.getDVOL(asset),
+        PollInterval.NORMAL, dataStore,
+      ))
+      // OI options toutes les 15s
+      this._stopFns.push(pollToStore(
+        CacheKey.oi('deribit', asset),
+        () => deribitProvider.getOpenInterest(asset),
+        PollInterval.FAST, dataStore,
+      ))
+      // Funding perp Deribit toutes les 15s
+      this._stopFns.push(pollToStore(
+        CacheKey.funding('deribit', asset),
+        () => deribitProvider.getFundingRate(asset),
+        PollInterval.FAST, dataStore,
+      ))
+      // Historique funding Deribit toutes les 5min
+      this._stopFns.push(pollToStore(
+        CacheKey.fundingHistory('deribit', asset),
+        () => deribitProvider.getFundingRateHistory(asset),
+        PollInterval.SLOW, dataStore,
+      ))
+      // Trades récents Deribit toutes les 30s
+      this._stopFns.push(pollToStore(
+        CacheKey.trades('deribit', asset),
+        () => deribitProvider.getLastTrades(asset),
+        PollInterval.FAST, dataStore,
+      ))
+      // Prix de livraison Deribit toutes les 5min
+      this._stopFns.push(pollToStore(
+        CacheKey.deliveryPrices('deribit', asset),
+        () => deribitProvider.getDeliveryPrices(asset),
+        PollInterval.SLOW, dataStore,
+      ))
 
-      // OI toutes les 15s
-      this._stopFns.push(
-        pollToStore(
-          CacheKey.oi('deribit', asset),
-          () => deribitProvider.getOpenInterest(asset),
-          PollInterval.FAST,
-          dataStore,
-        )
-      )
-
-      // Funding Deribit toutes les 15s
-      this._stopFns.push(
-        pollToStore(
-          CacheKey.funding('deribit', asset),
-          () => deribitProvider.getFundingRate(asset),
-          PollInterval.FAST,
-          dataStore,
-        )
-      )
-
-      // Funding Binance toutes les 15s
+      // ── Binance ────────────────────────────────────────────────────────────
       if (binance) {
-        this._stopFns.push(
-          pollToStore(
-            CacheKey.funding('binance', asset),
-            () => binanceProvider.getFundingRate(asset),
-            PollInterval.FAST,
-            dataStore,
-          )
-        )
+        // Spot toutes les 5s
+        this._stopFns.push(pollToStore(
+          CacheKey.spot('binance', asset),
+          () => binanceProvider.getSpot(asset),
+          PollInterval.REALTIME, dataStore,
+        ))
+        // Premium index (mark + funding) toutes les 15s
+        this._stopFns.push(pollToStore(
+          CacheKey.premiumIndex('binance', asset),
+          () => binanceProvider.getPremiumIndex(asset),
+          PollInterval.FAST, dataStore,
+        ))
+        // OI futures toutes les 15s
+        this._stopFns.push(pollToStore(
+          CacheKey.oi('binance', asset),
+          () => binanceProvider.getOpenInterest(asset),
+          PollInterval.FAST, dataStore,
+        ))
+        // Sentiment long/short toutes les 60s
+        this._stopFns.push(pollToStore(
+          CacheKey.sentiment('binance', asset),
+          () => binanceProvider.getLongShortRatio(asset),
+          PollInterval.NORMAL, dataStore,
+        ))
+        // Volume takers toutes les 60s
+        this._stopFns.push(pollToStore(
+          CacheKey.takerVolume('binance', asset),
+          () => binanceProvider.getTakerVolume(asset),
+          PollInterval.NORMAL, dataStore,
+        ))
+        // Liquidations toutes les 30s
+        this._stopFns.push(pollToStore(
+          CacheKey.liquidations('binance', asset),
+          () => binanceProvider.getLiquidations(asset),
+          PollInterval.FAST, dataStore,
+        ))
+        // Options chain Binance (eapi) toutes les 60s
+        this._stopFns.push(pollToStore(
+          CacheKey.optionsMark('binance', asset),
+          () => binanceProvider.getOptionsChain(asset),
+          PollInterval.NORMAL, dataStore,
+        ))
+        // OI options Binance (eapi) toutes les 5min
+        this._stopFns.push(pollToStore(
+          CacheKey.optionsOI('binance', asset),
+          () => binanceProvider.getOptionsOI(asset),
+          PollInterval.SLOW, dataStore,
+        ))
       }
-
-      // Spot Deribit toutes les 5s
-      this._stopFns.push(
-        pollToStore(
-          CacheKey.spot('deribit', asset),
-          () => deribitProvider.getSpot(asset),
-          PollInterval.REALTIME,
-          dataStore,
-        )
-      )
     })
 
     // 3. WebSocket temps réel (Deribit)
