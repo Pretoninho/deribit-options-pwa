@@ -502,7 +502,7 @@ export default function OptionsDataPage({ asset }) {
                   : '—'}
             </div>
             <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: 'var(--put)' }}>
-              {row.putOI != null ? Number(row.putOI).toFixed(0) : <span style={{ color: 'var(--text-muted)' }}>{row.total != null ? 'total' : '—'}</span>}
+              {row.putOI != null ? Number(row.putOI).toFixed(0) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
             </div>
             <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 800, color: safe(row.pcr) > 1 ? 'var(--put)' : safe(row.pcr) !== null ? 'var(--call)' : 'var(--text-muted)' }}>
               {safe(row.pcr) !== null ? Number(row.pcr).toFixed(3) : '—'}
