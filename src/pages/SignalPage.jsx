@@ -1,12 +1,23 @@
 import { useState, useEffect, useRef } from 'react'
-import { getDVOL, getFundingRate, getRealizedVol, getSpot, getFutures, getFuturePrice } from '../utils/api.js'
+import { getDVOL, getFundingRate, getRealizedVol, getSpot, getFutures, getFuturePrice, getInstruments, getOrderBook, getAllExpiries } from '../utils/api.js'
 import { computeSignal, getSignal } from '../data_processing/signals/signal_engine.js'
+import { calcDIRateSimple, calcTermStructureSignal } from '../data_processing/market_structure/term_structure.js'
+import { Bar } from 'react-chartjs-2'
+import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Tooltip } from 'chart.js'
+ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip)
+
+// ── Helpers TermPage ──
+function daysUntil(ts) { return Math.max(1, Math.round((ts - Date.now()) / 86400000)) }
+function fmtTs(ts) {
+  return new Date(ts).toLocaleDateString('fr-FR', { day:'2-digit', month:'short', year:'2-digit' }).toUpperCase()
+}
 
 const REFRESH_INTERVAL = 5 * 60 * 1000 // 5 minutes
 const LS_ALERT_KEY = 'signal_alert_threshold'
 const LS_HISTORY_KEY = 'signal_history'
 
 export default function SignalPage() {
+  const [activeTab, setActiveTab] = useState('signal')
   const [asset, setAsset] = useState('BTC')
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState(null)
@@ -18,6 +29,15 @@ export default function SignalPage() {
   const [history, setHistory] = useState(() => {
     try { return JSON.parse(localStorage.getItem(LS_HISTORY_KEY) || '[]') } catch { return [] }
   })
+  // ── Term/Basis state ──
+  const [basisRows, setBasisRows] = useState([])
+  const [basisSignal, setBasisSignal] = useState(null)
+  const [basisFunding, setBasisFunding] = useState(null)
+  const [basisSpot, setBasisSpot] = useState(null)
+  const [basisLoading, setBasisLoading] = useState(false)
+  const [basisError, setBasisError] = useState(null)
+  const [basisSubTab, setBasisSubTab] = useState('basis')
+
   const timerRef = useRef(null)
   const countRef = useRef(null)
   const assetRef = useRef(asset)
@@ -107,6 +127,83 @@ export default function SignalPage() {
     return () => stopMonitoring()
   }, [asset])
 
+  // ── Basis loader (TermPage logic) ──
+  const loadBasis = async () => {
+    setBasisLoading(true)
+    setBasisError(null)
+    const a = assetRef.current
+    try {
+      const [sp, futures, fundingData, instruments] = await Promise.all([
+        getSpot(a),
+        getFutures(a),
+        getFundingRate(a).catch(() => null),
+        getInstruments(a),
+      ])
+      setBasisSpot(sp)
+      setBasisFunding(fundingData)
+
+      const expiries = getAllExpiries(instruments)
+      const rowData = []
+      for (const f of futures) {
+        try {
+          const price = await getFuturePrice(f.instrument_name)
+          if (!price) continue
+          const isPerp = f.instrument_name.includes('PERPETUAL')
+          const days = isPerp ? null : daysUntil(f.expiration_timestamp)
+          const basisBrut = (price - sp) / sp * 100
+          const basisAnn = isPerp ? null : basisBrut / days * 365
+
+          let iv = null
+          if (!isPerp) {
+            const matchingExpiry = expiries.find(ts => {
+              const d = new Date(ts), fd = new Date(f.expiration_timestamp)
+              return d.getFullYear() === fd.getFullYear() && d.getMonth() === fd.getMonth() && d.getDate() === fd.getDate()
+            })
+            if (matchingExpiry) {
+              const forExp = instruments.filter(i => i.expiration_timestamp === matchingExpiry)
+              const strikes = [...new Set(forExp.map(i => i.strike))]
+              if (strikes.length) {
+                const atmS = strikes.reduce((p, c) => Math.abs(c - sp) < Math.abs(p - sp) ? c : p)
+                const callInst = forExp.find(x => x.option_type === 'call' && x.strike === atmS)
+                const putInst  = forExp.find(x => x.option_type === 'put'  && x.strike === atmS)
+                const [cb, pb] = await Promise.all([
+                  callInst ? getOrderBook(callInst.instrument_name).catch(() => null) : Promise.resolve(null),
+                  putInst  ? getOrderBook(putInst.instrument_name).catch(() => null)  : Promise.resolve(null),
+                ])
+                const cIV = cb?.mark_iv ?? null, pIV = pb?.mark_iv ?? null
+                iv = cIV != null && pIV != null ? (cIV + pIV) / 2 : cIV ?? pIV
+              }
+            }
+          }
+
+          const diRate = calcDIRateSimple(iv, days)
+          rowData.push({
+            instrument: f.instrument_name,
+            expiry: isPerp ? 'PERP' : fmtTs(f.expiration_timestamp),
+            days, price, basisBrut, basisAnn, isPerp, iv, diRate,
+          })
+        } catch (_) {}
+      }
+      rowData.sort((a, b) => (a.days || 9999) - (b.days || 9999))
+      setBasisRows(rowData)
+
+      const dated = rowData.filter(r => !r.isPerp && r.basisAnn != null)
+      if (dated.length) {
+        const avg = dated.reduce((s, r) => s + r.basisAnn, 0) / dated.length
+        const fundingAnn = fundingData?.avgAnn7d ?? 0
+        const structure = avg > 0.5 ? 'contango' : avg < -0.5 ? 'backwardation' : 'flat'
+        const { signal: diSignal, color: diColor, reason: diReason } =
+          calcTermStructureSignal({ avgBasisAnn: avg, structure }, fundingAnn)
+        setBasisSignal({
+          label: structure === 'contango' ? 'Contango' : structure === 'backwardation' ? 'Backwardation' : 'Flat',
+          avg, max: Math.max(...dated.map(r => r.basisAnn)), count: dated.length,
+          diSignal, diColor, diReason, fundingAnn,
+        })
+      }
+    } catch (e) { setBasisError(e.message) }
+    setBasisLoading(false)
+  }
+
   const requestNotifPermission = async () => {
     if ('Notification' in window) {
       const perm = await Notification.requestPermission()
@@ -133,8 +230,44 @@ export default function SignalPage() {
   const sparkW = 200, sparkH = 40
   const sparkPoints = history.filter(h => h.asset === asset).slice(-24)
 
+  // ── Basis chart data ──
+  const basisDated = basisRows.filter(r => !r.isPerp)
+  const basisChartData = {
+    labels: basisDated.map(r => r.expiry),
+    datasets: [{ data: basisDated.map(r => r.basisAnn?.toFixed(3)), backgroundColor: basisDated.map(r => r.basisAnn >= 0 ? 'rgba(0,229,160,.8)' : 'rgba(255,77,109,.8)'), borderRadius:4 }]
+  }
+  const basisChartOptions = {
+    responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{display:false}, tooltip:{ backgroundColor:'#0d1520', borderColor:'#1e3a5f', borderWidth:1, callbacks:{ label: ctx=>(ctx.parsed.y>0?'+':'')+ctx.parsed.y+'% ann.' } } },
+    scales:{
+      x:{ ticks:{color:'#6a8aaa',font:{size:9}}, grid:{color:'rgba(30,58,95,.3)'} },
+      y:{ ticks:{color:'#6a8aaa',font:{size:9},callback:v=>(v>0?'+':'')+v+'%'}, grid:{color:'rgba(30,58,95,.3)'} },
+    },
+  }
+  const cls2color = { Contango:'var(--call)', Backwardation:'var(--put)', Flat:'var(--accent2)' }
+  const bestDI = basisDated.filter(r => r.diRate && r.basisAnn).reduce((best, r) => {
+    const score = r.diRate + Math.abs(r.basisAnn)
+    return !best || score > best.diRate + Math.abs(best.basisAnn) ? r : best
+  }, null)
+
   return (
     <div className="page-wrap">
+
+      {/* ── Tabs ── */}
+      <div style={{ display:'flex', marginBottom:14, borderBottom:'1px solid var(--border)' }}>
+        {[['signal','Signal DI'],['basis','Basis']].map(([id, label]) => (
+          <button key={id} onClick={() => setActiveTab(id)} style={{
+            padding:'8px 18px', background:'none', border:'none', cursor:'pointer',
+            fontFamily:'var(--sans)', fontSize:12, fontWeight:700,
+            color: activeTab === id ? 'var(--accent)' : 'var(--text-muted)',
+            borderBottom: activeTab === id ? '2px solid var(--accent)' : '2px solid transparent',
+            marginBottom:-1, transition:'all .2s',
+          }}>{label}</button>
+        ))}
+      </div>
+
+      {/* ── TAB SIGNAL ── */}
+      {activeTab === 'signal' && (<>
 
       {/* Bannière alerte */}
       {alertFired && signal && (
@@ -313,6 +446,202 @@ export default function SignalPage() {
             <div style={{ textAlign:'center', fontSize:11, color:'var(--text-muted)', marginBottom:8 }}>
               {data.asset} : <strong style={{ color:'var(--atm)' }}>${data.spot.toLocaleString('en-US',{maximumFractionDigits:0})}</strong>
               {lastUpdate && <span style={{ marginLeft:8 }}>· {lastUpdate.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})}</span>}
+            </div>
+          )}
+        </div>
+      )}
+      </>)}
+
+      {/* ── TAB BASIS ── */}
+      {activeTab === 'basis' && (
+        <div className="fade-in">
+
+          {/* Header Basis */}
+          <div className="page-header" style={{ marginBottom:12 }}>
+            <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+              <div className="asset-toggle">
+                <button className={`asset-btn${asset==='BTC'?' active-btc':''}`} onClick={() => { setAsset('BTC'); setBasisRows([]); setBasisSignal(null); setBasisFunding(null) }}>₿ BTC</button>
+                <button className={`asset-btn${asset==='ETH'?' active-eth':''}`} onClick={() => { setAsset('ETH'); setBasisRows([]); setBasisSignal(null); setBasisFunding(null) }}>Ξ ETH</button>
+              </div>
+            </div>
+            <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+              {basisSpot && <span style={{ fontSize:12, color:'var(--atm)', fontFamily:'var(--sans)', fontWeight:800 }}>${basisSpot.toLocaleString('en-US',{maximumFractionDigits:0})}</span>}
+              <button className={`icon-btn${basisLoading?' loading':''}`} onClick={loadBasis}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
+                </svg>
+                Charger
+              </button>
+            </div>
+          </div>
+
+          {/* Sub-tabs Basis / Stratégie DI */}
+          <div style={{ display:'flex', marginBottom:14, borderBottom:'1px solid var(--border)' }}>
+            {[['basis','Basis'],['di','Stratégie DI']].map(([id,label]) => (
+              <button key={id} onClick={() => setBasisSubTab(id)} style={{
+                padding:'8px 18px', background:'none', border:'none', cursor:'pointer',
+                fontFamily:'var(--sans)', fontSize:12, fontWeight:700,
+                color: basisSubTab===id ? 'var(--accent)' : 'var(--text-muted)',
+                borderBottom: basisSubTab===id ? '2px solid var(--accent)' : '2px solid transparent',
+                marginBottom:-1, transition:'all .2s',
+              }}>{label}</button>
+            ))}
+          </div>
+
+          {basisError && <div className="error-box">⚠ {basisError}</div>}
+
+          {/* ── Sub-tab BASIS ── */}
+          {basisSubTab === 'basis' && (
+            <>
+              {basisSignal && (
+                <div className="stats-grid" style={{ marginBottom:12 }}>
+                  <div className="stat-card" style={{ borderColor: basisSignal.label==='Contango'?'rgba(0,229,160,.3)':basisSignal.label==='Backwardation'?'rgba(255,77,109,.3)':'rgba(255,107,53,.3)' }}>
+                    <div className="stat-label">Structure</div>
+                    <div className="stat-value" style={{ color:cls2color[basisSignal.label] }}>{basisSignal.label}</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-label">Basis moy. ann.</div>
+                    <div className="stat-value" style={{ color:basisSignal.avg>0?'var(--call)':basisSignal.avg<0?'var(--put)':'var(--accent2)' }}>
+                      {basisSignal.avg>0?'+':''}{basisSignal.avg.toFixed(2)}%
+                    </div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-label">Funding 7j ann.</div>
+                    <div className="stat-value" style={{ color:basisSignal.fundingAnn>0?'var(--call)':basisSignal.fundingAnn<0?'var(--put)':'var(--accent2)' }}>
+                      {basisSignal.fundingAnn>0?'+':''}{basisSignal.fundingAnn?.toFixed(2)}%
+                    </div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-label">Futures actifs</div>
+                    <div className="stat-value">{basisSignal.count}</div>
+                  </div>
+                </div>
+              )}
+
+              {basisDated.length > 0 && (
+                <div className="card" style={{ marginBottom:12 }}>
+                  <div className="card-header">Basis annualisé par expiration</div>
+                  <div style={{ padding:'4px 8px 16px', height:200 }}>
+                    <Bar data={basisChartData} options={basisChartOptions} />
+                  </div>
+                </div>
+              )}
+
+              {basisRows.length > 0 && (
+                <div className="card">
+                  <div className="card-header">Détail par expiration</div>
+                  {basisRows.map(r => (
+                    <div key={r.instrument} style={{ padding:'10px 14px', borderBottom:'1px solid rgba(30,58,95,.3)', display:'grid', gridTemplateColumns:'1fr auto', gap:8 }}>
+                      <div>
+                        <div style={{ fontFamily:'var(--sans)', fontWeight:700, fontSize:12, color:'var(--text)' }}>{r.instrument}</div>
+                        <div style={{ fontSize:10, color:'var(--text-muted)', marginTop:2 }}>
+                          {r.expiry} {r.days ? `· ${r.days}j` : ''}
+                          {r.iv ? <span style={{ marginLeft:8, color:'var(--accent)' }}>IV: {r.iv.toFixed(1)}%</span> : ''}
+                        </div>
+                      </div>
+                      <div style={{ textAlign:'right' }}>
+                        {r.basisAnn != null ? (
+                          <div style={{ fontFamily:'var(--sans)', fontWeight:700, fontSize:13, color:r.basisAnn>0.5?'var(--call)':r.basisAnn<-0.5?'var(--put)':'var(--accent2)' }}>
+                            {r.basisAnn>0?'+':''}{r.basisAnn.toFixed(2)}%
+                          </div>
+                        ) : <div style={{ fontSize:11, color:'var(--text-muted)' }}>Funding</div>}
+                        <div style={{ fontSize:10, color:'var(--text-muted)' }}>
+                          {r.basisAnn==null?'':r.basisAnn>0.5?'Contango':r.basisAnn<-0.5?'Backwardation':'Flat'}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {!basisLoading && basisRows.length === 0 && !basisError && (
+                <div className="empty-state"><div className="empty-icon">◇</div><h3>Prêt à charger</h3><p>Appuyez sur Charger</p></div>
+              )}
+            </>
+          )}
+
+          {/* ── Sub-tab STRATÉGIE DI ── */}
+          {basisSubTab === 'di' && (
+            <div className="fade-in">
+              {!basisSignal && (
+                <div className="empty-state"><div className="empty-icon">◇</div><h3>Charger d'abord</h3><p>Appuyez sur Charger pour analyser la structure</p></div>
+              )}
+              {basisSignal && (
+                <>
+                  <div className="card" style={{ marginBottom:12, borderColor: basisSignal.diColor==='var(--call)'?'rgba(0,229,160,.3)':'rgba(255,215,0,.3)' }}>
+                    <div className="card-header" style={{ color: basisSignal.diColor }}>Signal DI — Basis + Funding</div>
+                    <div style={{ padding:'14px 16px' }}>
+                      <div style={{ fontFamily:'var(--sans)', fontWeight:800, fontSize:18, color: basisSignal.diColor, marginBottom:8 }}>{basisSignal.diSignal}</div>
+                      <div style={{ fontSize:12, color:'var(--text-dim)', lineHeight:1.8 }}>{basisSignal.diReason}</div>
+                    </div>
+                  </div>
+
+                  {basisDated.filter(r => r.iv && r.diRate).length > 0 && (
+                    <div className="card" style={{ marginBottom:12 }}>
+                      <div className="card-header">
+                        <span>Comparatif par échéance</span>
+                        <span style={{ fontSize:10, color:'var(--text-muted)' }}>Prime DI + Basis</span>
+                      </div>
+                      <div style={{ padding:'8px 14px 4px', fontSize:9, color:'var(--text-muted)', display:'grid', gridTemplateColumns:'1fr 50px 60px 60px 70px', gap:4, textTransform:'uppercase', letterSpacing:'.5px' }}>
+                        <span>Échéance</span><span style={{ textAlign:'center' }}>Jours</span>
+                        <span style={{ textAlign:'right' }}>Basis</span><span style={{ textAlign:'right' }}>Taux DI</span><span style={{ textAlign:'right' }}>Total</span>
+                      </div>
+                      {basisDated.filter(r => r.iv && r.diRate).map(r => {
+                        const total = r.diRate + Math.abs(r.basisAnn ?? 0)
+                        const isBest = bestDI?.instrument === r.instrument
+                        return (
+                          <div key={r.instrument} style={{
+                            padding:'10px 14px', borderBottom:'1px solid rgba(30,58,95,.3)',
+                            display:'grid', gridTemplateColumns:'1fr 50px 60px 60px 70px', gap:4, alignItems:'center',
+                            background: isBest ? 'rgba(255,215,0,.04)' : undefined,
+                            borderLeft: isBest ? '2px solid var(--atm)' : '2px solid transparent',
+                          }}>
+                            <div>
+                              <div style={{ fontFamily:'var(--sans)', fontWeight: isBest?800:600, fontSize:12, color: isBest?'var(--atm)':'var(--text)' }}>
+                                {r.expiry}{isBest && <span style={{ fontSize:9, marginLeft:4 }}>🏆</span>}
+                              </div>
+                              <div style={{ fontSize:9, color:'var(--text-muted)' }}>IV {r.iv?.toFixed(1)}%</div>
+                            </div>
+                            <div style={{ textAlign:'center', fontSize:11, color:'var(--text-muted)' }}>{r.days}</div>
+                            <div style={{ textAlign:'right' }}>
+                              <div style={{ fontSize:11, fontWeight:700, color: r.basisAnn>0?'var(--call)':'var(--put)' }}>
+                                {r.basisAnn>0?'+':''}{r.basisAnn?.toFixed(2)}%
+                              </div>
+                            </div>
+                            <div style={{ textAlign:'right' }}>
+                              <div style={{ fontSize:11, fontWeight:700, color:'var(--accent)' }}>{r.diRate?.toFixed(2)}%</div>
+                            </div>
+                            <div style={{ textAlign:'right' }}>
+                              <div style={{ fontSize:12, fontWeight:800, color: isBest?'var(--atm)':'var(--text)' }}>{total.toFixed(2)}%</div>
+                              <div style={{ fontSize:9, color:'var(--text-muted)' }}>/an</div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {basisFunding && (
+                    <div className="card">
+                      <div className="card-header">Funding Perp — Impact stratégie</div>
+                      <div style={{ padding:'12px 16px', display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                        <div>
+                          <div className="stat-label">Funding actuel ann.</div>
+                          <div className="stat-value" style={{ color: basisFunding.current > 0 ? 'var(--call)' : 'var(--put)' }}>
+                            {basisFunding.current != null ? (basisFunding.current>0?'+':'') + basisFunding.current.toFixed(2)+'%' : '—'}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="stat-label">Moy. 7j ann.</div>
+                          <div className="stat-value" style={{ color: basisFunding.avgAnn7d > 0 ? 'var(--call)' : 'var(--put)' }}>
+                            {basisFunding.avgAnn7d != null ? (basisFunding.avgAnn7d>0?'+':'') + basisFunding.avgAnn7d.toFixed(2)+'%' : '—'}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
         </div>
