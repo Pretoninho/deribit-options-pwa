@@ -15,6 +15,9 @@ import {
   normalizeDeribitDVOL,
   normalizeDeribitFunding,
   normalizeDeribitOI,
+  normalizeDeribitFundingHistory,
+  normalizeDeribitDeliveryPrices,
+  normalizeDeribitTrades,
 } from '../normalizers/format_data.js'
 import { dataStore, CacheKey } from '../data_store/cache.js'
 
@@ -195,6 +198,76 @@ export async function getMarketSnapshot(asset) {
     oi: oi.status === 'fulfilled' ? oi.value : null,
     rv: rv.status === 'fulfilled' ? rv.value : null,
   }
+}
+
+/**
+ * Ticker détaillé d'un instrument (mark price, IV, greeks, OI).
+ * Équivalent de get_order_book mais via /public/ticker.
+ * @param {string} instrumentName  — ex: 'BTC-28MAR25-80000-C'
+ */
+export async function getTicker(instrumentName) {
+  const result = await apiFetch('ticker', { instrument_name: instrumentName })
+  const isOption = instrumentName.endsWith('-C') || instrumentName.endsWith('-P')
+  const normalized = isOption
+    ? normalizeDeribitOption(result)
+    : normalizeDeribitOrderBook(result)
+
+  if (normalized) {
+    const asset = instrumentName.split('-')[0]
+    const key = isOption
+      ? CacheKey.option('deribit', asset, instrumentName)
+      : CacheKey.future('deribit', asset, instrumentName)
+    dataStore.set(key, normalized)
+  }
+  return normalized
+}
+
+/**
+ * Historique du funding rate du perpetuel (count derniers points).
+ * @param {'BTC'|'ETH'} asset
+ * @param {number} [count=90]  — nombre de points (1 par 8h)
+ */
+export async function getFundingRateHistory(asset, count = 90) {
+  const result = await apiFetch('get_funding_rate_history', {
+    instrument_name: `${asset}-PERPETUAL`,
+    count,
+  })
+  const normalized = normalizeDeribitFundingHistory(asset, result)
+  if (normalized) dataStore.set(CacheKey.fundingHistory('deribit', asset), normalized)
+  return normalized
+}
+
+/**
+ * Prix de livraison / règlement historiques.
+ * @param {'BTC'|'ETH'} asset
+ * @param {number} [count=20]
+ */
+export async function getDeliveryPrices(asset, count = 20) {
+  const result = await apiFetch('get_delivery_prices', {
+    index_name: `${asset.toLowerCase()}_usd`,
+    count,
+  })
+  const normalized = normalizeDeribitDeliveryPrices(asset, result)
+  if (normalized) dataStore.set(CacheKey.deliveryPrices('deribit', asset), normalized)
+  return normalized
+}
+
+/**
+ * Derniers trades par currency (futures + options).
+ * @param {'BTC'|'ETH'} asset
+ * @param {'option'|'future'|'any'} [kind='future']
+ * @param {number} [count=30]
+ */
+export async function getLastTrades(asset, kind = 'future', count = 30) {
+  const result = await apiFetch('get_last_trades_by_currency', {
+    currency: asset,
+    kind,
+    count,
+  })
+  const trades = result?.trades ?? []
+  const normalized = normalizeDeribitTrades(asset, trades)
+  if (normalized) dataStore.set(CacheKey.trades('deribit', asset), normalized)
+  return normalized
 }
 
 /**

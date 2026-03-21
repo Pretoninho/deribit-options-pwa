@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { version } from '../package.json'
-import LandingPage from './pages/LandingPage.jsx'
-import MarketPage from './pages/MarketPage.jsx'
-import VolatilityPage from './pages/VolatilityPage.jsx'
-import SignalsPage from './pages/SignalsPage.jsx'
-import DIPage from './pages/DIPage.jsx'
-import TradePage from './pages/TradePage.jsx'
+import LandingPage    from './pages/LandingPage.jsx'
+import MarketPage     from './pages/MarketPage.jsx'
+import DerivativesPage from './pages/DerivativesPage.jsx'
+import OptionsDataPage from './pages/OptionsDataPage.jsx'
+import SignalsPage    from './pages/SignalsPage.jsx'
+import TradePage      from './pages/TradePage.jsx'
 import './App.css'
 
 const ASSETS = ['BTC', 'ETH']
@@ -18,7 +18,13 @@ const TABS = [
     </svg>
   },
   {
-    id: 'vol', label: 'Volatilité',
+    id: 'deriv', label: 'Derivés',
+    icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M7 16V4m0 0L3 8m4-4 4 4"/><path d="M17 8v12m0 0 4-4m-4 4-4-4"/>
+    </svg>
+  },
+  {
+    id: 'options', label: 'Options',
     icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
     </svg>
@@ -27,12 +33,6 @@ const TABS = [
     id: 'signals', label: 'Signaux',
     icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-    </svg>
-  },
-  {
-    id: 'di', label: 'DI',
-    icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
     </svg>
   },
   {
@@ -65,11 +65,11 @@ export default function App() {
     <div className="app-shell">
       <AppHeader asset={asset} setAsset={setAsset} />
       <div className="app-content">
-        {tab === 'market'   && <MarketPage asset={asset} />}
-        {tab === 'vol'      && <VolatilityPage asset={asset} />}
-        {tab === 'signals'  && <SignalsPage asset={asset} />}
-        {tab === 'di'       && <DIPage asset={asset} />}
-        {tab === 'trade'    && <TradePage asset={asset} />}
+        {tab === 'market'   && <MarketPage     asset={asset} />}
+        {tab === 'deriv'    && <DerivativesPage asset={asset} />}
+        {tab === 'options'  && <OptionsDataPage asset={asset} />}
+        {tab === 'signals'  && <SignalsPage     asset={asset} />}
+        {tab === 'trade'    && <TradePage       asset={asset} />}
       </div>
       <BottomNav tab={tab} setTab={setTab} />
       <VersionBar version={version} forceUpdate={forceUpdate} />
