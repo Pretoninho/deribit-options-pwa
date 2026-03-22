@@ -39,6 +39,19 @@
 export { dataStore, CacheKey, SmartCache, smartCache, fnv1a, hashData } from './data_store/cache.js'
 export { POLL, HASH_CONFIG } from './data_store/hash_config.js'
 
+export {
+  getCacheChangeLog,
+  clearCacheChangeLog,
+} from './data_store/cache.js'
+
+export {
+  buildSearchIndex,
+  filterByHash,
+  filterByDate,
+  filterByEvent,
+  applyFilters,
+} from './data_store/hash_search.js'
+
 // ── Exports : providers ───────────────────────────────────────────────────────
 export * as deribit  from './providers/deribit.js'
 export * as binance  from './providers/binance.js'
@@ -53,6 +66,10 @@ export {
   getDaysUntilCorrected,
   SYNC_INTERVAL_MS,
 } from './providers/clock_sync.js'
+
+export { getDeribitTime }  from './providers/deribit.js'
+export { getBinanceTime }  from './providers/binance.js'
+export { getCoinbaseTime } from './providers/coinbase.js'
 
 export { getCachedClockSync, setCachedClockSync } from './data_store/cache.js'
 
