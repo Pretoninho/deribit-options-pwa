@@ -140,18 +140,50 @@ Ne réponds qu'avec le JSON, aucun texte avant ou après.`
 
 // ── Fallback statique ─────────────────────────────────────────────────────────
 
+const METAPHORS_POSITIVE = [
+  'Comme un vent dans le dos en montagne — les conditions sont favorables, avance méthodiquement.',
+  'Comme un cuisinier qui trouve exactement les bons ingrédients — tout est en place pour exécuter.',
+  'Comme une vague bien formée vue du bord — le surfer expérimenté sait quand entrer à l\'eau.',
+  'Comme un feu de cheminée qui prend bien — les conditions sont réunies, il suffit de maintenir.',
+  'Comme un jardinier qui voit la saison idéale pour planter — l\'opportunité est devant toi.',
+  'Comme un navigateur avec un vent favorable et une carte précise — cap sur l\'objectif.',
+]
+
+const METAPHORS_NEUTRAL = [
+  'Comme un ciel mi-couvert mi-dégagé — difficile de prévoir la météo du lendemain.',
+  'Comme un carrefour sans panneau évident — observer, réfléchir, choisir sa direction.',
+  'Comme une partie d\'échecs en milieu de jeu — les pièces sont en place, mais l\'issue reste ouverte.',
+  'Comme un musicien qui cherche le bon tempo — le rythme du marché n\'est pas encore clair.',
+]
+
+const METAPHORS_NEGATIVE = [
+  'Comme un ciel couvert sans certitude de pluie — attente et vigilance sont de mise.',
+  'Comme un pêcheur par vent contraire — mieux vaut attendre que forcer une mauvaise sortie.',
+  'Comme un pilote dans le brouillard — ralentir et attendre une meilleure visibilité.',
+  'Comme un randonneur qui voit des nuages noirs à l\'horizon — prudence avant de partir.',
+]
+
+function _pickRandom(arr) {
+  return arr[Math.floor(Math.random() * arr.length)]
+}
+
 function _fallback(signal, toneId, isFallback = true) {
   const score = signal.score ?? 50
   const isPositive = score >= 60
+  const isNeutral  = score >= 40 && score < 60
+
+  const metaphor = isPositive
+    ? _pickRandom(METAPHORS_POSITIVE)
+    : isNeutral
+    ? _pickRandom(METAPHORS_NEUTRAL)
+    : _pickRandom(METAPHORS_NEGATIVE)
 
   return {
     emoji:    isPositive ? '📈' : score >= 40 ? '⚖️' : '⚠️',
     headline: isPositive
       ? 'Le marché offre une fenêtre d\'action'
       : score >= 40 ? 'Marché en observation' : 'Prudence recommandée',
-    metaphor: isPositive
-      ? 'Comme un soleil qui perce les nuages après la pluie — l\'opportunité est là pour qui la voit.'
-      : 'Comme un ciel couvert sans certitude de pluie — attente et vigilance sont de mise.',
+    metaphor,
     situation: signal.situation,
     steps: isPositive
       ? [

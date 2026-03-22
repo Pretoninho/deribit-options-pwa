@@ -126,6 +126,13 @@ export async function recordPattern(fingerprint, spotPrice) {
   if (existing.outcomes.length > 200) existing.outcomes.shift()
 
   await idbSet(key, existing)
+
+  // Maintenir l'index des hashes connus
+  const index = (await idbGet('mf_index')) ?? []
+  if (!index.includes(fingerprint.hash)) {
+    index.push(fingerprint.hash)
+    await idbSet('mf_index', index)
+  }
 }
 
 /**
@@ -177,6 +184,22 @@ export async function updateOutcomes(hash, currentPrice) {
  *   config: Object|null
  * }>}
  */
+/**
+ * Retourne tous les patterns enregistrés avec leurs statistiques.
+ * Utilise l'index 'mf_index' pour lister les hashes connus.
+ * @returns {Promise<Array<{ hash: string, occurrences: number, winRate_1h: number|null, winRate_4h: number|null, avgMove_24h: number|null, config: Object|null }>>}
+ */
+export async function getAllPatterns() {
+  const index = (await idbGet('mf_index')) ?? []
+  const patterns = await Promise.all(
+    index.map(async hash => {
+      const stats = await getPatternStats(hash)
+      return { hash, ...stats }
+    })
+  )
+  return patterns.filter(p => p.occurrences > 0)
+}
+
 export async function getPatternStats(hash) {
   const record = await idbGet(idbKey(hash))
 

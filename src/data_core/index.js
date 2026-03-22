@@ -96,6 +96,8 @@ export {
   hashMarketState,
   saveSignal,
   getSignalHistory,
+  getAnomalyLog,
+  clearAnomalyLog,
 } from '../data_processing/signals/signal_engine.js'
 
 export {
@@ -110,6 +112,7 @@ export {
   recordPattern,
   updateOutcomes,
   getPatternStats,
+  getAllPatterns,
 } from '../data_processing/signals/market_fingerprint.js'
 
 // ── Facade DataCore ───────────────────────────────────────────────────────────
