@@ -18,9 +18,9 @@ export default defineConfig({
       includeAssets: ['favicon.ico'],
       manifest: {
         id: '/deribit-options-pwa/',
-        name: 'Deribit Options & DI Tracker',
-        short_name: 'DeribitPro',
-        description: 'Options chain, IV tracker, Dual Investment & Term Structure',
+        name: 'Veridex',
+        short_name: 'Veridex',
+        description: 'Analyse cross-exchange · Signaux composites · Données vérifiées',
         theme_color: '#060a0f',
         background_color: '#060a0f',
         display: 'standalone',

@@ -119,7 +119,7 @@ function AppHeader({ asset, setAsset, clockSync, onClockSync }) {
           </svg>
         </div>
         <span style={{ fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 15, color: 'var(--text)' }}>
-          Option<span style={{ color: 'var(--accent)' }}>Lab</span>
+          Veri<span style={{ color: 'var(--accent)' }}>dex</span>
         </span>
       </div>
 

@@ -1,8 +1,8 @@
 {
   "id": "/deribit-options-pwa/",
-  "name": "Deribit Options Pro",
-  "short_name": "DeribitPro",
-  "description": "Options chain, IV tracker, Dual Investment & Term Structure",
+  "name": "Veridex",
+  "short_name": "Veridex",
+  "description": "Analyse cross-exchange · Signaux composites · Données vérifiées",
   "start_url": "/deribit-options-pwa/",
   "scope": "/deribit-options-pwa/",
   "display": "standalone",
