@@ -219,6 +219,72 @@ export function computeSignal({ dvol, funding, rv, basisAvg, onChainScore, spot,
   return { scores: { s1, s2, s3, s4, s5 }, global, signal: getSignal(global), noviceData }
 }
 
+// ── Persistance des anomalies ─────────────────────────────────────────────────
+
+const ANOMALY_LOG_KEY = 'veridex_anomaly_log'
+const MAX_ANOMALIES   = 200
+
+/**
+ * Persiste une anomalie détectée dans localStorage avec déduplication.
+ * @param {{ anomaly: boolean, changedIndicators: string[] }} anomalyResult
+ * @param {string} [asset]
+ */
+function _persistAnomaly(anomalyResult, asset) {
+  if (!anomalyResult?.anomaly) return
+
+  const hash = fnv1a(
+    `${anomalyResult.changedIndicators.join('|')}|${Math.floor(Date.now() / 10_000)}`
+  )
+
+  const entry = {
+    hash,
+    timestamp:         Date.now(),
+    asset:             asset ?? 'BTC',
+    anomaly:           true,
+    changedIndicators: anomalyResult.changedIndicators,
+    count:             anomalyResult.changedIndicators.length,
+    severity:          anomalyResult.changedIndicators.length >= 5 ? 'critical' : 'warning',
+  }
+
+  try {
+    let log = JSON.parse(localStorage.getItem(ANOMALY_LOG_KEY) || '[]')
+
+    // Déduplication : éviter deux fois la même anomalie en < 60s
+    const duplicate = log.find(e =>
+      e.hash === hash ||
+      (JSON.stringify(e.changedIndicators) ===
+       JSON.stringify(anomalyResult.changedIndicators) &&
+       Date.now() - e.timestamp < 60_000)
+    )
+    if (duplicate) return
+
+    log.push(entry)
+    if (log.length > MAX_ANOMALIES) log = log.slice(-MAX_ANOMALIES)
+    localStorage.setItem(ANOMALY_LOG_KEY, JSON.stringify(log))
+  } catch (_) {}
+}
+
+/**
+ * Retourne le journal des anomalies (du plus récent au plus ancien).
+ * @param {number} [limit=100]
+ * @returns {Array}
+ */
+export function getAnomalyLog(limit = 100) {
+  try {
+    const log = JSON.parse(localStorage.getItem(ANOMALY_LOG_KEY) || '[]')
+    return log.slice(-limit).reverse()
+  } catch (_) {
+    return []
+  }
+}
+
+/**
+ * Efface le journal des anomalies.
+ */
+export function clearAnomalyLog() {
+  localStorage.removeItem(ANOMALY_LOG_KEY)
+}
+
 // ── Détection d'anomalies de marché ──────────────────────────────────────────
 
 /**
@@ -274,7 +340,9 @@ export function detectMarketAnomaly(snapshot, asset) {
   _lastSnapshotTs = now
 
   if (changed.length >= ANOMALY_THRESHOLD) {
-    return { anomaly: true, changedIndicators: changed, asset }
+    const result = { anomaly: true, changedIndicators: changed, asset }
+    _persistAnomaly(result, asset)
+    return result
   }
   return { anomaly: false, changedIndicators: changed, asset }
 }

@@ -8,7 +8,9 @@ import OptionsDataPage from './pages/OptionsDataPage.jsx'
 import SignalsPage    from './pages/SignalsPage.jsx'
 import TradePage      from './pages/TradePage.jsx'
 import OnChainPage    from './pages/OnChainPage.jsx'
+import AuditPage      from './pages/AuditPage.jsx'
 import ClockStatus    from './components/ClockStatus.jsx'
+import AuditBanner    from './components/AuditBanner.jsx'
 import { syncServerClocks, SYNC_INTERVAL_MS } from './data_core/providers/clock_sync.js'
 import { setCachedClockSync } from './data_core/data_store/cache.js'
 import './App.css'
@@ -56,11 +58,12 @@ const TABS = [
 ]
 
 export default function App() {
-  const [inApp, setInApp] = useState(false)
-  const [tab, setTab] = useState('market')
-  const [asset, setAsset] = useState('BTC')
+  const [inApp,     setInApp]     = useState(false)
+  const [tab,       setTab]       = useState('market')
+  const [auditOpen, setAuditOpen] = useState(false)
+  const [asset,     setAsset]     = useState('BTC')
   const [clockSync, setClockSync] = useState(null)
-  const [btcPrice, setBtcPrice] = useState(null)
+  const [btcPrice,  setBtcPrice]  = useState(null)
 
   useEffect(() => {
     const doSync = async () => {
@@ -97,9 +100,40 @@ export default function App() {
     />
   )
 
+  if (auditOpen) return (
+    <div className="app-shell">
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '10px 16px', background: 'var(--bg-surface)',
+        borderBottom: '1px solid var(--border)', flexShrink: 0,
+      }}>
+        <button
+          onClick={() => setAuditOpen(false)}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6,
+            fontFamily: 'var(--font-body)', fontSize: 13, padding: 0,
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M19 12H5M12 19l-7-7 7-7"/>
+          </svg>
+          Retour
+        </button>
+        <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>
+          Audit
+        </span>
+        <div style={{ width: 60 }} />
+      </div>
+      <div className="app-content">
+        <AuditPage />
+      </div>
+    </div>
+  )
+
   return (
     <div className="app-shell">
-      <AppHeader asset={asset} setAsset={setAsset} clockSync={clockSync} onClockSync={setClockSync} />
+      <AppHeader asset={asset} setAsset={setAsset} clockSync={clockSync} onClockSync={setClockSync} onAudit={() => setAuditOpen(true)} />
       <div className="app-content">
         {tab === 'market'   && <MarketPage      asset={asset} />}
         {tab === 'deriv'    && <DerivativesPage  asset={asset} clockSync={clockSync} />}
@@ -108,13 +142,14 @@ export default function App() {
         {tab === 'trade'    && <TradePage        asset={asset} />}
         {tab === 'onchain'  && <OnChainPage      asset={asset} />}
       </div>
+      <AuditBanner onNavigateToAudit={() => setAuditOpen(true)} />
       <BottomNav tab={tab} setTab={setTab} />
       <VersionBar version={version} forceUpdate={forceUpdate} />
     </div>
   )
 }
 
-function AppHeader({ asset, setAsset, clockSync, onClockSync }) {
+function AppHeader({ asset, setAsset, clockSync, onClockSync, onAudit }) {
   return (
     <header style={{
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -138,6 +173,20 @@ function AppHeader({ asset, setAsset, clockSync, onClockSync }) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <ClockStatus clockSync={clockSync} onSync={onClockSync} />
+        <button
+          onClick={onAudit}
+          title="Audit des données"
+          style={{
+            background: 'none', border: '1px solid var(--border)', borderRadius: 7,
+            width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer', color: 'var(--text-muted)', transition: 'all 150ms ease', padding: 0,
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+          </svg>
+        </button>
         <div style={{ position: 'relative' }}>
         <select
           value={asset}

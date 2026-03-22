@@ -75,6 +75,12 @@ export class SmartCache {
     this._entries = new Map()
     /** @type {Map<string, number>} — timestamp de la dernière modification par clé */
     this._changedAt = new Map()
+    /**
+     * Journal circulaire des changements détectés (max 500 entrées).
+     * Chaque entrée : { key: string, hash: string, ts: number }
+     * @type {Array<{ key: string, hash: string, ts: number }>}
+     */
+    this.changeLog = []
   }
 
   /**
@@ -88,8 +94,13 @@ export class SmartCache {
     const existing = this._entries.get(key)
     const changed = !existing || existing.hash !== newHash
 
-    this._entries.set(key, { hash: newHash, data, timestamp: Date.now() })
-    if (changed) this._changedAt.set(key, Date.now())
+    const now = Date.now()
+    this._entries.set(key, { hash: newHash, data, timestamp: now })
+    if (changed) {
+      this._changedAt.set(key, now)
+      this.changeLog.push({ key, hash: newHash, ts: now })
+      if (this.changeLog.length > 500) this.changeLog.shift()
+    }
 
     return changed
   }
