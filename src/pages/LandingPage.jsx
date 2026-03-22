@@ -15,6 +15,8 @@ function fmtPrice(v) {
   return '$' + Math.round(v).toLocaleString('en-US')
 }
 
+import VLogo from '../components/VLogo.jsx'
+
 export default function LandingPage({ onEnter, btcPrice, ethPrice }) {
   const metrics = [
     {
@@ -98,16 +100,13 @@ export default function LandingPage({ onEnter, btcPrice, ethPrice }) {
         alignItems: 'center',
       }}>
 
-        {/* Symbole */}
+        {/* Logo */}
         <div style={{
-          fontSize: 32,
-          color: 'var(--accent)',
-          marginBottom: 16,
-          lineHeight: 1,
+          marginBottom: 20,
           opacity: 0,
           animation: 'landingFadeUp 400ms ease-out 0ms forwards',
         }}>
-          ◈
+          <VLogo size={64} />
         </div>
 
         {/* Nom VERIDEX */}

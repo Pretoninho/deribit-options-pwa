@@ -17,6 +17,7 @@
  */
 
 import { useState, useRef } from 'react'
+import VLogo from './VLogo.jsx'
 
 // ── Icônes SVG ────────────────────────────────────────────────────────────────
 
@@ -189,8 +190,8 @@ export default function NavDrawer({
         {/* Header */}
         <div className="drawer-header">
           <div className="drawer-logo">
-            <span className="drawer-logo-symbol">◈</span>
-            {' '}VERIDEX
+            <VLogo size={36} />
+            <span className="drawer-logo-text">VERIDEX</span>
           </div>
           <div className="drawer-tagline">Market intelligence. Verified.</div>
         </div>
