@@ -6,6 +6,7 @@ import DerivativesPage from './pages/DerivativesPage.jsx'
 import OptionsDataPage from './pages/OptionsDataPage.jsx'
 import SignalsPage    from './pages/SignalsPage.jsx'
 import TradePage      from './pages/TradePage.jsx'
+import OnChainPage    from './pages/OnChainPage.jsx'
 import './App.css'
 
 const ASSETS = ['BTC', 'ETH']
@@ -41,6 +42,13 @@ const TABS = [
       <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
     </svg>
   },
+  {
+    id: 'onchain', label: 'On-Chain',
+    icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+    </svg>
+  },
 ]
 
 export default function App() {
@@ -70,6 +78,7 @@ export default function App() {
         {tab === 'options'  && <OptionsDataPage asset={asset} />}
         {tab === 'signals'  && <SignalsPage     asset={asset} />}
         {tab === 'trade'    && <TradePage       asset={asset} />}
+        {tab === 'onchain'  && <OnChainPage     asset={asset} />}
       </div>
       <BottomNav tab={tab} setTab={setTab} />
       <VersionBar version={version} forceUpdate={forceUpdate} />
