@@ -42,6 +42,7 @@ export { dataStore, CacheKey, SmartCache, smartCache, fnv1a, hashData } from './
 export * as deribit  from './providers/deribit.js'
 export * as binance  from './providers/binance.js'
 export * as coinbase from './providers/coinbase.js'
+export * as onchain  from './providers/onchain.js'
 
 // ── Exports : streams ─────────────────────────────────────────────────────────
 export { wsStream, DeribitChannels }     from './streams/websocket.js'
@@ -74,6 +75,7 @@ export {
   // Utilitaires
   mergeSpotTickers,
   validateDataFreshness,
+  normalizeOnChain,
 } from './normalizers/format_data.js'
 
 // ── Exports : signals & fingerprint ──────────────────────────────────────────
@@ -83,6 +85,13 @@ export {
   saveSignal,
   getSignalHistory,
 } from '../data_processing/signals/signal_engine.js'
+
+export {
+  detectExchangeFlowSignal,
+  detectMempoolSignal,
+  detectMinerSignal,
+  compositeOnChainSignal,
+} from '../data_processing/signals/onchain_signals.js'
 
 export {
   createFingerprint,

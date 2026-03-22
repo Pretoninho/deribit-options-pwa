@@ -654,3 +654,139 @@ export function validateDataFreshness(dataMap) {
     details,
   }
 }
+
+// ── Normalisateur On-Chain ────────────────────────────────────────────────────
+
+/**
+ * Seuils de congestion mempool (transactions en attente).
+ */
+const MEMPOOL_LOW      = 5_000
+const MEMPOOL_MEDIUM   = 20_000
+const MEMPOOL_HIGH     = 50_000
+
+/**
+ * Calcule le niveau de congestion mempool.
+ * @param {number|null} txCount
+ * @returns {'low'|'medium'|'high'|'critical'}
+ */
+function _mempoolCongestion(txCount) {
+  if (txCount == null) return 'low'
+  if (txCount >= MEMPOOL_HIGH)   return 'critical'
+  if (txCount >= MEMPOOL_MEDIUM) return 'high'
+  if (txCount >= MEMPOOL_LOW)    return 'medium'
+  return 'low'
+}
+
+/**
+ * Interprète le netflow exchange en signal directionnel.
+ * netflow positif = entrée exchanges (distribution → baissier)
+ * netflow négatif = sortie exchanges (accumulation → haussier)
+ */
+function _exchangeFlowSignal(netflow) {
+  if (netflow == null) return { signal: 'neutral', strength: 'weak' }
+  const abs = Math.abs(netflow)
+  const dir = netflow > 0 ? 'distribution' : netflow < 0 ? 'accumulation' : 'neutral'
+  const strength = abs > 10_000 ? 'strong' : abs > 2_000 ? 'moderate' : 'weak'
+  return { signal: dir, strength }
+}
+
+/**
+ * Normalise toutes les données on-chain en une structure canonique.
+ *
+ * @param {{
+ *   blockchain: Object|null,
+ *   mempool:    Object|null,
+ *   glassnodeFlow:   Object|null,
+ *   cryptoQuantFlow: Object|null,
+ * }} raw
+ * @returns {{
+ *   mempool: { txCount, congestion, fastFee, hourFee, timestamp },
+ *   exchangeFlow: { netflow, signal, strength, timestamp },
+ *   mining: { hashRate, difficulty, trend, timestamp },
+ *   composite: { onChainScore, bias, confidence }
+ * }}
+ */
+export function normalizeOnChain(raw) {
+  const { blockchain, mempool, glassnodeFlow, cryptoQuantFlow } = raw ?? {}
+
+  // ── Mempool ────────────────────────────────────────────────────────────────
+  const txCount    = mempool?.count      ?? null
+  const fastFee    = mempool?.fastestFee ?? null
+  const hourFee    = mempool?.hourFee    ?? null
+  const congestion = _mempoolCongestion(txCount)
+
+  // ── Exchange flow (priorité CryptoQuant, fallback Glassnode) ──────────────
+  const netflow = cryptoQuantFlow?.netflow ?? glassnodeFlow?.netflow ?? null
+  const { signal: flowSignal, strength: flowStrength } = _exchangeFlowSignal(netflow)
+
+  // ── Mining ─────────────────────────────────────────────────────────────────
+  const hashRate   = blockchain?.hash_rate  ?? null
+  const difficulty = blockchain?.difficulty ?? null
+  // Trend = stable par défaut (pas de données historiques dans ce snapshot)
+  const miningTrend = 'stable'
+
+  // ── Score composite 0-100 ─────────────────────────────────────────────────
+  let score = 50  // base neutre
+
+  // Exchange flow
+  if (netflow != null) {
+    if (flowSignal === 'accumulation') {
+      score += flowStrength === 'strong' ? 30 : flowStrength === 'moderate' ? 18 : 8
+    } else if (flowSignal === 'distribution') {
+      score -= flowStrength === 'strong' ? 30 : flowStrength === 'moderate' ? 18 : 8
+    }
+  }
+
+  // Mempool congestion → activité intense = +20
+  if (congestion === 'critical') score += 20
+  else if (congestion === 'high') score += 12
+  else if (congestion === 'medium') score += 5
+
+  // Hash rate proxy : +20 si disponible et non nul (signe de réseau actif)
+  if (hashRate != null && hashRate > 0) score += 20
+
+  // Fees élevés → urgence transactions → +15
+  if (fastFee != null) {
+    if (fastFee > 100) score += 15
+    else if (fastFee > 50) score += 8
+    else if (fastFee > 20) score += 3
+  }
+
+  // Inflow fort → distribution → -30 (déjà pris en compte dans flowSignal)
+
+  const onChainScore = Math.max(0, Math.min(100, Math.round(score)))
+
+  const bias = onChainScore >= 60 ? 'bullish' : onChainScore >= 40 ? 'neutral' : 'bearish'
+  const confidence = (netflow != null && hashRate != null && fastFee != null)
+    ? 'high'
+    : (netflow != null || fastFee != null)
+      ? 'medium'
+      : 'low'
+
+  return {
+    mempool: {
+      txCount,
+      congestion,
+      fastFee,
+      hourFee,
+      timestamp: mempool?.timestamp ?? Date.now(),
+    },
+    exchangeFlow: {
+      netflow,
+      signal:    flowSignal,
+      strength:  flowStrength,
+      timestamp: cryptoQuantFlow?.timestamp ?? glassnodeFlow?.timestamp ?? Date.now(),
+    },
+    mining: {
+      hashRate,
+      difficulty,
+      trend:     miningTrend,
+      timestamp: blockchain?.timestamp ?? Date.now(),
+    },
+    composite: {
+      onChainScore,
+      bias,
+      confidence,
+    },
+  }
+}

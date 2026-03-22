@@ -89,18 +89,40 @@ export function scoreIVvsRV(dvol, rv) {
  * Calcule le score composite pondéré.
  * Les composantes null sont exclues et les poids redistribués.
  *
- * @param {number|null} s1 — score IV (poids 35)
- * @param {number|null} s2 — score funding (poids 25)
- * @param {number|null} s3 — score basis (poids 25)
- * @param {number|null} s4 — score IV/RV (poids 15)
+ * Pondération avec on-chain (s5) :
+ *   s1 IV       30%
+ *   s2 Funding  20%
+ *   s3 Basis    20%
+ *   s4 IV/RV    15%
+ *   s5 OnChain  15%
+ *
+ * Sans s5 (rétro-compat) :
+ *   s1 IV       35%
+ *   s2 Funding  25%
+ *   s3 Basis    25%
+ *   s4 IV/RV    15%
+ *
+ * @param {number|null} s1 — score IV
+ * @param {number|null} s2 — score funding
+ * @param {number|null} s3 — score basis
+ * @param {number|null} s4 — score IV/RV
+ * @param {number|null} [s5] — score on-chain (optionnel)
  * @returns {number|null}  — 0 à 100
  */
-export function calcGlobalScore(s1, s2, s3, s4) {
+export function calcGlobalScore(s1, s2, s3, s4, s5) {
+  const hasOnChain = s5 != null
+  const w1 = hasOnChain ? 30 : 35
+  const w2 = hasOnChain ? 20 : 25
+  const w3 = hasOnChain ? 20 : 25
+  const w4 = 15
+  const w5 = 15
+
   let total = 0, weights = 0
-  if (s1 != null) { total += s1 * 35; weights += 35 }
-  if (s2 != null) { total += s2 * 25; weights += 25 }
-  if (s3 != null) { total += s3 * 25; weights += 25 }
-  if (s4 != null) { total += s4 * 15; weights += 15 }
+  if (s1 != null) { total += s1 * w1; weights += w1 }
+  if (s2 != null) { total += s2 * w2; weights += w2 }
+  if (s3 != null) { total += s3 * w3; weights += w3 }
+  if (s4 != null) { total += s4 * w4; weights += w4 }
+  if (s5 != null) { total += s5 * w5; weights += w5 }
   return weights > 0 ? Math.round(total / weights) : null
 }
 
@@ -160,13 +182,23 @@ export function getSignal(score) {
  *   signal: ReturnType<typeof getSignal>
  * }}
  */
-export function computeSignal({ dvol, funding, rv, basisAvg }) {
+/**
+ * @param {{
+ *   dvol: object|null,
+ *   funding: object|null,
+ *   rv: object|null,
+ *   basisAvg: number|null,
+ *   onChainScore?: number|null
+ * }} inputs
+ */
+export function computeSignal({ dvol, funding, rv, basisAvg, onChainScore }) {
   const s1 = scoreIV(dvol)
   const s2 = scoreFunding(funding)
   const s3 = scoreBasis(basisAvg)
   const s4 = scoreIVvsRV(dvol, rv)
-  const global = calcGlobalScore(s1, s2, s3, s4)
-  return { scores: { s1, s2, s3, s4 }, global, signal: getSignal(global) }
+  const s5 = onChainScore ?? null
+  const global = calcGlobalScore(s1, s2, s3, s4, s5)
+  return { scores: { s1, s2, s3, s4, s5 }, global, signal: getSignal(global) }
 }
 
 // ── Détection d'anomalies de marché ──────────────────────────────────────────
