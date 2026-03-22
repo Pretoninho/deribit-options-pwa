@@ -19,6 +19,7 @@ import * as deribit from '../data_core/providers/deribit.js'
 import * as binance from '../data_core/providers/binance.js'
 import { analyzeIV } from '../data_processing/volatility/iv_rank.js'
 import { calcOptionGreeks } from '../data_processing/volatility/greeks.js'
+import { recordSnapshot as saveMetricSnapshot } from '../data_processing/history/metric_history.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -213,6 +214,8 @@ export default function OptionsDataPage({ asset }) {
   // OI
   const [dOI,         setDOI]         = useState(null)
   const [bOI,         setBOI]         = useState(null)
+  const [bFunding,    setBFunding]    = useState(null)  // Binance funding rate
+  const [activeTab,   setActiveTab]   = useState('analyse')
   const [loading,     setLoading]     = useState(false)
   const [lastUpdate,  setLastUpdate]  = useState(null)
   // Journal
@@ -239,7 +242,7 @@ export default function OptionsDataPage({ asset }) {
     setLoading(true)
     try {
       // ── Phase 1 : données de base ──────────────────────────────────────────
-      const [spotRes, dvolRes, rvRes, fundingRes, bOptRes, bOIRes, dOIRes] =
+      const [spotRes, dvolRes, rvRes, fundingRes, bOptRes, bOIRes, dOIRes, bFundRes] =
         await Promise.allSettled([
           deribit.getSpot(asset),
           deribit.getDVOL(asset),
@@ -248,6 +251,7 @@ export default function OptionsDataPage({ asset }) {
           binance.getOptionsChain(asset),
           binance.getOpenInterest(asset),   // futures OI (fiable) — eapi options trop peu liquides
           deribit.getOpenInterest(asset),
+          binance.getFundingRate(asset),
         ])
 
       if (!isMounted.current) return
@@ -257,13 +261,17 @@ export default function OptionsDataPage({ asset }) {
       const rvData   = rvRes.status    === 'fulfilled' ? rvRes.value    : null
       const spotPrice = safe(spotData?.price)
 
+      const dFundData = fundingRes.status === 'fulfilled' ? fundingRes.value : null
+      const bFundData = bFundRes.status  === 'fulfilled' ? bFundRes.value  : null
+
       setSpot(spotData)
       setDvol(dvolData)
       setRv(rvData)
-      setFunding(fundingRes.status === 'fulfilled' ? fundingRes.value : null)
+      setFunding(dFundData)
       setBChain(bOptRes.status === 'fulfilled' ? bOptRes.value : null)
       setBOI(bOIRes.status === 'fulfilled' ? bOIRes.value : null)
       setDOI(dOIRes.status === 'fulfilled' ? dOIRes.value : null)
+      setBFunding(bFundData)
 
       // IV Rank / Percentile
       if (dvolData) {
@@ -318,6 +326,20 @@ export default function OptionsDataPage({ asset }) {
             } catch (_) {}
           }
           setDChain(termRows)
+        } catch (_) {}
+      }
+
+      // ── recordSnapshot ─────────────────────────────────────────────────────
+      if (isMounted.current) {
+        try {
+          saveMetricSnapshot(asset, {
+            dvol:          safe(dvolData?.current),
+            ivRank:        safe(dvolData ? analyzeIV(dvolData)?.ivRank : null),
+            rv:            safe(rvData?.current),
+            dFundingRate:  safe(dFundData?.rate),
+            bFundingRate:  safe(bFundData?.rate),
+            dPutCallRatio: safe(dOIRes.status === 'fulfilled' ? dOIRes.value?.putCallRatio : null),
+          })
         } catch (_) {}
       }
 
@@ -792,6 +814,7 @@ export default function OptionsDataPage({ asset }) {
           )}
         </>
       )}
+
 
       {lastUpdate && (
         <div style={{ textAlign: 'center', fontSize: 10, color: 'var(--text-muted)', opacity: .5, marginTop: 12, marginBottom: 4 }}>
