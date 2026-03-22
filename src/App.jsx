@@ -78,8 +78,8 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    coinbase.getSpot('BTC').then(p => setBtcPrice(p)).catch(() => {})
-    coinbase.getSpot('ETH').then(p => setEthPrice(p)).catch(() => {})
+    coinbase.getSpot('BTC').then(p => setBtcPrice(p?.price ?? null)).catch(() => {})
+    coinbase.getSpot('ETH').then(p => setEthPrice(p?.price ?? null)).catch(() => {})
   }, [])
 
   const forceUpdate = () => {
@@ -134,7 +134,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <AppHeader asset={asset} setAsset={setAsset} clockSync={clockSync} onClockSync={setClockSync} onAudit={() => setAuditOpen(true)} />
+      <AppHeader asset={asset} setAsset={setAsset} clockSync={clockSync} onClockSync={setClockSync} onAudit={() => setAuditOpen(true)} onLanding={() => setInApp(false)} />
       <div className="app-content">
         {tab === 'market'   && <MarketPage      asset={asset} />}
         {tab === 'deriv'    && <DerivativesPage  asset={asset} clockSync={clockSync} />}
@@ -150,14 +150,18 @@ export default function App() {
   )
 }
 
-function AppHeader({ asset, setAsset, clockSync, onClockSync, onAudit }) {
+function AppHeader({ asset, setAsset, clockSync, onClockSync, onAudit, onLanding }) {
   return (
     <header style={{
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       padding: '10px 16px', background: 'var(--bg-surface)',
       borderBottom: '1px solid var(--border)', flexShrink: 0,
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <button
+        onClick={onLanding}
+        title="Accueil"
+        style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+      >
         <div style={{
           width: 28, height: 28, borderRadius: 8,
           background: 'var(--accent-dim)', border: '1px solid var(--accent-border)',
@@ -170,7 +174,7 @@ function AppHeader({ asset, setAsset, clockSync, onClockSync, onAudit }) {
         <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15, color: 'var(--text)' }}>
           Veri<span style={{ color: 'var(--accent)' }}>dex</span>
         </span>
-      </div>
+      </button>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <ClockStatus clockSync={clockSync} onSync={onClockSync} />
