@@ -1,4 +1,4 @@
-# OptionLab — PWA Mobile
+# Veridex — PWA Mobile
 
 Application React PWA installable sur mobile pour l'analyse des marchés crypto dérivés :
 options, futures, funding, IV, Greeks, signaux — données en temps réel depuis 3 exchanges.
@@ -7,7 +7,7 @@ options, futures, funding, IV, Greeks, signaux — données en temps réel depui
 
 | Onglet | Contenu |
 |---|---|
-| **Market** | Prix spot 4 exchanges (Deribit index, Binance, OKX, Coinbase), VWAP pondéré volume, spread cross-exchange |
+| **Market** | Prix spot 3 exchanges (Deribit index, Binance, Coinbase), VWAP pondéré volume, spread cross-exchange |
 | **Dérivés** | Funding perpétuel (Deribit · Binance), term structure futures + basis annualisé, Open Interest, sentiment Long/Short (Binance), liquidations, countdown prochain fixing funding |
 | **Options** | DVOL + IV Rank Deribit, structure à terme ATM IV, Greeks ATM (Black-Scholes), IV spread Deribit / Binance, OI, prix de règlement, onglet Signaux avec couche Expert/Simple (Claude API) |
 | **Signaux** | Score composite global (IV · Funding · Basis · IV/RV · On-Chain), 3 blocs recommandations indépendants (Spot / Futures / Options), couche Expert et Simple (6 tons paramétrables, génération Claude API) |
@@ -27,7 +27,6 @@ src/
 │   │   ├── deribit.js              ← REST Deribit : index, options, DVOL, OI, funding, RV, settlement
 │   │   ├── binance.js              ← REST Binance : spot, perp, funding, OI, sentiment, liquidations
 │   │   ├── coinbase.js             ← REST Coinbase Exchange : spot fiat USD
-│   │   ├── okx.js                  ← REST OKX : spot
 │   │   └── onchain.js              ← On-chain : blockchain.info, mempool.space, Glassnode, CryptoQuant
 │   ├── normalizers/
 │   │   └── format_data.js          ← Format canonique unifié + validateDataFreshness + normalizeOnChain
@@ -155,7 +154,6 @@ Dans **Settings → Pages → Source → GitHub Actions**.
 | **Binance Spot** | `/api/v3/ticker/24hr` | Prix spot USDT |
 | **Binance Futures** | `/fapi/v1/*`, `/futures/data/*` | Perp, funding, OI, sentiment, liquidations |
 | **Binance Options** | `/eapi/v1/mark` | Mark IV options européennes |
-| **OKX** | `/api/v5/market/ticker` | Prix spot |
 | **Coinbase Exchange** | `/products/{id}/ticker` | Spot fiat USD |
 | **blockchain.info** | `/stats` | Stats réseau Bitcoin |
 | **mempool.space** | `/api/mempool`, `/api/v1/fees/recommended` | Mempool, frais |

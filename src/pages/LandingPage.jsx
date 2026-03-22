@@ -22,13 +22,13 @@ export default function LandingPage({ onEnter, version }) {
           fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 32,
           color: 'var(--text)', letterSpacing: '-1px', lineHeight: 1.1,
         }}>
-          Option<span style={{ color: 'var(--accent)' }}>Lab</span>
+          Veri<span style={{ color: 'var(--accent)' }}>dex</span>
         </div>
         <div style={{
           fontSize: 11, color: 'var(--text-muted)', letterSpacing: '2px',
           textTransform: 'uppercase', marginTop: 4,
         }}>
-          Crypto Options Suite
+          Market Intelligence. Verified.
         </div>
       </div>
 
@@ -37,16 +37,16 @@ export default function LandingPage({ onEnter, version }) {
         fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.7,
         maxWidth: 280, marginBottom: 40,
       }}>
-        Données marché en temps réel. Volatilité, signaux, opportunités Dual Investment — tout au même endroit.
+        Analyse cross-exchange · Signaux composites · Données vérifiées
       </p>
 
       {/* Features */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 40, width: '100%', maxWidth: 280 }}>
         {[
           { icon: '📊', label: 'Market', desc: 'Spot · Futures · Funding' },
-          { icon: '〰️', label: 'Volatilité', desc: 'DVOL · IV Rank · Skew' },
+          { icon: '〰️', label: 'Options', desc: 'DVOL · IV Rank · Greeks' },
           { icon: '⚡', label: 'Signaux', desc: 'Score composite 0-100' },
-          { icon: '⏱️', label: 'DI', desc: 'Meilleures opportunités' },
+          { icon: '🔗', label: 'On-Chain', desc: 'Mempool · Flows · Mining' },
           { icon: '📋', label: 'Trade', desc: 'Paper trading simulé' },
         ].map(f => (
           <div key={f.label} style={{
@@ -77,7 +77,7 @@ export default function LandingPage({ onEnter, version }) {
       </button>
 
       <div style={{ marginTop: 16, fontSize: 10, color: 'var(--text-muted)', opacity: .4 }}>
-        v{version} · Données Deribit
+        v{version} · Deribit · Binance · Coinbase
       </div>
     </div>
   )
