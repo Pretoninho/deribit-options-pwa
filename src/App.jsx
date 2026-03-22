@@ -12,6 +12,7 @@ import AuditPage      from './pages/AuditPage.jsx'
 import ClockStatus    from './components/ClockStatus.jsx'
 import AuditBanner    from './components/AuditBanner.jsx'
 import NavDrawer      from './components/NavDrawer.jsx'
+import VLogo          from './components/VLogo.jsx'
 import { getSignalHistory } from './data_processing/signals/signal_engine.js'
 import { syncServerClocks, SYNC_INTERVAL_MS } from './data_core/providers/clock_sync.js'
 import { setCachedClockSync } from './data_core/data_store/cache.js'
@@ -136,6 +137,7 @@ export default function App() {
         clockSync={clockSync}
         onClockSync={setClockSync}
         onOpenDrawer={() => setDrawerOpen(true)}
+        onLanding={() => setInApp(false)}
       />
 
       {/* Contenu des pages */}
@@ -173,25 +175,34 @@ export default function App() {
 
 // ── Header global ─────────────────────────────────────────────────────────────
 
-function GlobalHeader({ tab, asset, clockSync, onClockSync, onOpenDrawer }) {
+function GlobalHeader({ tab, asset, clockSync, onClockSync, onOpenDrawer, onLanding }) {
   return (
     <header className="app-header-global">
       <div className="header-inner">
 
-        {/* Hamburger */}
-        <button className="hamburger-btn" onClick={onOpenDrawer} aria-label="Menu">
-          <div className="hamburger-line" style={{ width: 14 }} />
-          <div className="hamburger-line" style={{ width: 10 }} />
-          <div className="hamburger-line" style={{ width: 14 }} />
-        </button>
+        {/* Gauche : logo (→ landing) + hamburger (→ drawer) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            onClick={onLanding}
+            aria-label="Accueil Veridex"
+            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+          >
+            <VLogo size={28} />
+          </button>
+          <button className="hamburger-btn" onClick={onOpenDrawer} aria-label="Menu">
+            <div className="hamburger-line" style={{ width: 14 }} />
+            <div className="hamburger-line" style={{ width: 10 }} />
+            <div className="hamburger-line" style={{ width: 14 }} />
+          </button>
+        </div>
 
-        {/* Titre page active + ClockStatus */}
+        {/* Centre : titre page active + ClockStatus */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <ClockStatus clockSync={clockSync} onSync={onClockSync} />
           <span className="header-title">{PAGE_NAMES[tab] ?? tab}</span>
         </div>
 
-        {/* Asset pill — tap ouvre le drawer */}
+        {/* Droite : asset pill (tap → drawer) */}
         <button className="asset-pill-header" onClick={onOpenDrawer}>
           {asset}
         </button>
