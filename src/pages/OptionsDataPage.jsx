@@ -15,6 +15,7 @@ import * as deribit from '../data_core/providers/deribit.js'
 import * as binance from '../data_core/providers/binance.js'
 import { analyzeIV } from '../data_processing/volatility/iv_rank.js'
 import { calcOptionGreeks } from '../data_processing/volatility/greeks.js'
+import { recordSnapshot } from '../data_processing/history/metric_history.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -178,6 +179,10 @@ export default function OptionsDataPage({ asset }) {
   // OI
   const [dOI,         setDOI]         = useState(null)
   const [bOI,         setBOI]         = useState(null)
+  const [dFunding,    setDFunding]    = useState(null)  // Deribit funding rate
+  const [bFunding,    setBFunding]    = useState(null)  // Binance funding rate
+  const [activeTab,   setActiveTab]   = useState('analyse')
+  const [journal,     setJournal]     = useState([])    // historique snapshots lisibles
   const [loading,     setLoading]     = useState(false)
   const [lastUpdate,  setLastUpdate]  = useState(null)
   const isMounted = useRef(true)
@@ -194,7 +199,7 @@ export default function OptionsDataPage({ asset }) {
     setLoading(true)
     try {
       // ── Phase 1 : données de base ──────────────────────────────────────────
-      const [spotRes, dvolRes, rvRes, bOptRes, bOIRes, dOIRes] =
+      const [spotRes, dvolRes, rvRes, bOptRes, bOIRes, dOIRes, dFundRes, bFundRes] =
         await Promise.allSettled([
           deribit.getSpot(asset),
           deribit.getDVOL(asset),
@@ -202,6 +207,8 @@ export default function OptionsDataPage({ asset }) {
           binance.getOptionsChain(asset),
           binance.getOpenInterest(asset),   // futures OI (fiable) — eapi options trop peu liquides
           deribit.getOpenInterest(asset),
+          deribit.getFundingRate(asset),
+          binance.getFundingRate(asset),
         ])
 
       if (!isMounted.current) return
@@ -211,12 +218,17 @@ export default function OptionsDataPage({ asset }) {
       const rvData   = rvRes.status    === 'fulfilled' ? rvRes.value    : null
       const spotPrice = safe(spotData?.price)
 
+      const dFundData = dFundRes.status === 'fulfilled' ? dFundRes.value : null
+      const bFundData = bFundRes.status === 'fulfilled' ? bFundRes.value : null
+
       setSpot(spotData)
       setDvol(dvolData)
       setRv(rvData)
       setBChain(bOptRes.status === 'fulfilled' ? bOptRes.value : null)
       setBOI(bOIRes.status === 'fulfilled' ? bOIRes.value : null)
       setDOI(dOIRes.status === 'fulfilled' ? dOIRes.value : null)
+      setDFunding(dFundData)
+      setBFunding(bFundData)
 
       // IV Rank / Percentile
       if (dvolData) {
@@ -272,6 +284,30 @@ export default function OptionsDataPage({ asset }) {
           }
           setDChain(termRows)
         } catch (_) {}
+      }
+
+      // ── recordSnapshot ─────────────────────────────────────────────────────
+      if (isMounted.current) {
+        try {
+          recordSnapshot(asset, {
+            dvol:          safe(dvolData?.current),
+            ivRank:        safe(dvolData ? analyzeIV(dvolData)?.ivRank : null),
+            rv:            safe(rvData?.current),
+            dFundingRate:  safe(dFundData?.rate),
+            bFundingRate:  safe(bFundData?.rate),
+            dPutCallRatio: safe(dOIRes.status === 'fulfilled' ? dOIRes.value?.putCallRatio : null),
+          })
+        } catch (_) {}
+
+        // Entrée journal (10 dernières)
+        const now = new Date()
+        setJournal(prev => [{
+          ts:      now,
+          dvol:    safe(dvolData?.current),
+          rv:      safe(rvData?.current),
+          dFund:   safe(dFundData?.rate),
+          bFund:   safe(bFundData?.rate),
+        }, ...prev].slice(0, 10))
       }
 
       if (isMounted.current) setLastUpdate(new Date())
@@ -344,6 +380,32 @@ export default function OptionsDataPage({ asset }) {
           </button>
         </div>
       </div>
+
+      {/* ── Tabs ── */}
+      <div style={{
+        display: 'flex', gap: 0, borderBottom: '1px solid var(--border)',
+        marginBottom: 12, overflowX: 'auto',
+      }}>
+        {[
+          { id: 'analyse',  label: 'Analyse' },
+          { id: 'signaux',  label: 'Signaux' },
+          { id: 'journal',  label: 'Journal' },
+        ].map(({ id, label }) => (
+          <button key={id} onClick={() => setActiveTab(id)} style={{
+            background: 'none', border: 'none', outline: 'none',
+            padding: '10px 18px', cursor: 'pointer',
+            fontFamily: 'var(--sans)', fontWeight: 700, fontSize: 12,
+            color:        activeTab === id ? 'var(--accent)' : 'var(--text-muted)',
+            borderBottom: activeTab === id ? '2px solid var(--accent)' : '2px solid transparent',
+            flexShrink: 0,
+          }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ══════════════ TAB : ANALYSE ══════════════ */}
+      {activeTab === 'analyse' && <>
 
       {/* Cards DVOL */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
@@ -517,6 +579,119 @@ export default function OptionsDataPage({ asset }) {
           Appuie sur Refresh pour charger les données
         </div>
       )}
+
+      </>} {/* fin tab analyse */}
+
+      {/* ══════════════ TAB : SIGNAUX ══════════════ */}
+      {activeTab === 'signaux' && <>
+        <SectionTitle>Funding Rate — Perpétuels</SectionTitle>
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+          <TableHead cols={['Exchange', 'Taux 8h', 'Annualisé']} />
+          {[
+            { name: 'Deribit', color: 'var(--accent)', rate: safe(dFunding?.rate) },
+            { name: 'Binance', color: '#F0B90B',       rate: safe(bFunding?.rate) },
+          ].map((row, i) => (
+            <div key={row.name} style={{
+              display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
+              gap: 4, padding: '10px 16px', alignItems: 'center',
+              borderBottom: i < 1 ? '1px solid rgba(255,255,255,.04)' : 'none',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ width: 6, height: 6, borderRadius: '50%', background: row.color, flexShrink: 0 }} />
+                <span style={{ fontSize: 11, fontFamily: 'var(--sans)', fontWeight: 700 }}>{row.name}</span>
+              </div>
+              <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: row.rate > 0 ? 'var(--call)' : row.rate < 0 ? 'var(--put)' : 'var(--text-muted)' }}>
+                {row.rate !== null ? fmtPct(row.rate * 100, 4) : '—'}
+              </div>
+              <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: 'var(--text-muted)' }}>
+                {row.rate !== null ? fmtPct(row.rate * 100 * 3 * 365, 1) : '—'}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <SectionTitle>Signaux IV</SectionTitle>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <MetricCard
+            label="IV vs RV"
+            value={ivPremium != null ? fmtSigned(ivPremium, 1) + ' pts' : '—'}
+            sub={ivPremium > 10 ? 'IV élevée → vendre vol' : ivPremium < 0 ? 'RV > IV → acheter vol' : 'Neutre'}
+            color={safe(ivPremium) > 10 ? 'var(--put)' : safe(ivPremium) < 0 ? 'var(--call)' : 'var(--text-muted)'}
+          />
+          <MetricCard
+            label="IV Rank"
+            value={ivAnalysis?.ivRank != null ? Math.round(ivAnalysis.ivRank) + '/100' : '—'}
+            sub={safe(ivAnalysis?.ivRank) > 70 ? 'Haut → vendre vol' : safe(ivAnalysis?.ivRank) < 30 ? 'Bas → acheter vol' : 'Neutre'}
+            color={safe(ivAnalysis?.ivRank) > 70 ? 'var(--put)' : safe(ivAnalysis?.ivRank) < 30 ? 'var(--call)' : 'var(--text-muted)'}
+            bar={ivAnalysis?.ivRank}
+          />
+        </div>
+
+        {ivArbSignals.length > 0 && (
+          <>
+            <SectionTitle>Arb IV Cross-Exchange</SectionTitle>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+              <TableHead cols={['Jours', 'Deribit', 'Binance', 'Spread']} />
+              {ivArbSignals.map((r, i) => (
+                <div key={r.days} style={{
+                  display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr',
+                  gap: 4, padding: '10px 16px', alignItems: 'center',
+                  borderBottom: i < ivArbSignals.length - 1 ? '1px solid rgba(255,255,255,.04)' : 'none',
+                  background: r.spread > 5 ? 'rgba(255,193,7,.04)' : 'transparent',
+                }}>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.days}j</div>
+                  <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: 'var(--accent)' }}>
+                    {r.deribit != null ? fmtPct(r.deribit, 1) : '—'}
+                  </div>
+                  <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: '#F0B90B' }}>
+                    {r.binance != null ? fmtPct(r.binance, 1) : '—'}
+                  </div>
+                  <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 800, color: r.spread > 5 ? 'var(--atm)' : 'var(--text-muted)' }}>
+                    {fmtPct(r.spread, 1)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </>} {/* fin tab signaux */}
+
+      {/* ══════════════ TAB : JOURNAL ══════════════ */}
+      {activeTab === 'journal' && <>
+        <SectionTitle>Journal des snapshots</SectionTitle>
+        {journal.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '32px 16px', color: 'var(--text-muted)', fontSize: 13 }}>
+            Aucun snapshot enregistré — les données s'accumulent à chaque refresh.
+          </div>
+        ) : (
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+            <TableHead cols={['Heure', 'DVOL', 'RV', 'Fund D', 'Fund B']} />
+            {journal.map((e, i) => (
+              <div key={i} style={{
+                display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr',
+                gap: 4, padding: '8px 16px', alignItems: 'center',
+                borderBottom: i < journal.length - 1 ? '1px solid rgba(255,255,255,.04)' : 'none',
+              }}>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                  {e.ts.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </div>
+                <div style={{ textAlign: 'right', fontSize: 11, fontWeight: 700, color: 'var(--accent)' }}>
+                  {e.dvol != null ? e.dvol.toFixed(1) : '—'}
+                </div>
+                <div style={{ textAlign: 'right', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)' }}>
+                  {e.rv != null ? fmtPct(e.rv, 1) : '—'}
+                </div>
+                <div style={{ textAlign: 'right', fontSize: 11, fontWeight: 700, color: e.dFund > 0 ? 'var(--call)' : e.dFund < 0 ? 'var(--put)' : 'var(--text-muted)' }}>
+                  {e.dFund != null ? fmtPct(e.dFund * 100, 4) : '—'}
+                </div>
+                <div style={{ textAlign: 'right', fontSize: 11, fontWeight: 700, color: e.bFund > 0 ? 'var(--call)' : e.bFund < 0 ? 'var(--put)' : 'var(--text-muted)' }}>
+                  {e.bFund != null ? fmtPct(e.bFund * 100, 4) : '—'}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </>} {/* fin tab journal */}
 
       {lastUpdate && (
         <div style={{ textAlign: 'center', fontSize: 10, color: 'var(--text-muted)', opacity: .5, marginTop: 12, marginBottom: 4 }}>
