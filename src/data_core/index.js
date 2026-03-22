@@ -44,6 +44,17 @@ export * as binance  from './providers/binance.js'
 export * as coinbase from './providers/coinbase.js'
 export * as onchain  from './providers/onchain.js'
 
+// ── Exports : clock sync ──────────────────────────────────────────────────────
+export {
+  syncServerClocks,
+  getNextFundingTime,
+  getTimeCorrected,
+  getDaysUntilCorrected,
+  SYNC_INTERVAL_MS,
+} from './providers/clock_sync.js'
+
+export { getCachedClockSync, setCachedClockSync } from './data_store/cache.js'
+
 // ── Exports : streams ─────────────────────────────────────────────────────────
 export { wsStream, DeribitChannels }     from './streams/websocket.js'
 export { pollingStream, PollInterval, pollToStore } from './streams/polling.js'

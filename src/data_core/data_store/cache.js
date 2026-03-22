@@ -342,6 +342,26 @@ export const dataStore = new DataStore()
 // ── Clés canoniques ───────────────────────────────────────────────────────────
 // Helpers pour construire des clés cohérentes
 
+// ── Clock sync helpers ────────────────────────────────────────────────────────
+
+const CLOCK_SYNC_CACHE_KEY = 'system:clock_sync'
+
+/**
+ * Retourne la dernière synchronisation d'horloge depuis le SmartCache.
+ * @returns {object|null}
+ */
+export function getCachedClockSync() {
+  return smartCache.get(CLOCK_SYNC_CACHE_KEY) ?? null
+}
+
+/**
+ * Enregistre le résultat de syncServerClocks() dans le SmartCache.
+ * @param {object} sync
+ */
+export function setCachedClockSync(sync) {
+  smartCache.set(CLOCK_SYNC_CACHE_KEY, sync)
+}
+
 export const CacheKey = {
   spot:            (source, asset) => `${source}:${asset}:spot`,
   future:          (source, asset, instrument) => `${source}:${asset}:future:${instrument}`,

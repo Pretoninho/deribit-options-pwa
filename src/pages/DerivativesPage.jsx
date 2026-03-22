@@ -10,6 +10,7 @@ import { useState, useEffect, useRef } from 'react'
 import * as deribit  from '../data_core/providers/deribit.js'
 import * as binance  from '../data_core/providers/binance.js'
 import * as coinbase from '../data_core/providers/coinbase.js'
+import { getNextFundingTime } from '../data_core/providers/clock_sync.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -138,6 +139,23 @@ function TableHead({ cols, firstLeft = true }) {
 
 // ── Page principale ───────────────────────────────────────────────────────────
 
+// ── Hook countdown funding ────────────────────────────────────────────────────
+
+function useFundingCountdown() {
+  const [countdown, setCountdown] = useState(() => getNextFundingTime())
+  useEffect(() => {
+    const timer = setInterval(() => setCountdown(getNextFundingTime()), 60_000)
+    return () => clearInterval(timer)
+  }, [])
+  return countdown
+}
+
+function countdownColor(msRemaining) {
+  if (msRemaining < 15 * 60_000)  return '#ff4d6d'  // < 15 min → rouge
+  if (msRemaining < 60 * 60_000)  return '#ffa800'  // < 1 h   → orange
+  return 'var(--call)'                               // > 1 h   → vert
+}
+
 export default function DerivativesPage({ asset }) {
   const [state, setState] = useState({
     spot:         null,
@@ -242,6 +260,12 @@ export default function DerivativesPage({ asset }) {
   const { spot, cSpot, dFunding, bFunding, dFundingHist, sentiment, takerVol,
           dOI, bOI, liquidations, futures } = state
 
+  const { hoursRemaining, minutesRemaining, msRemaining } = useFundingCountdown()
+  const fundingCountdown = hoursRemaining > 0
+    ? `${hoursRemaining}h ${minutesRemaining}m`
+    : `${minutesRemaining}m`
+  const fundingColor = countdownColor(msRemaining)
+
   const avgFunding30 = dFundingHist?.history?.length
     ? dFundingHist.history.reduce((s, r) => s + (safe(r.rateAnn) ?? 0), 0) / dFundingHist.history.length
     : null
@@ -249,17 +273,6 @@ export default function DerivativesPage({ asset }) {
   const bestBasisAnn = futures
     .filter(r => !r.isPerp && safe(r.basisAnn) !== null)
     .reduce((best, r) => (best === null || r.basisAnn > best ? r.basisAnn : best), null)
-
-  const nextFundingMs = safe(bFunding?.nextFundingTime)
-  const fundingCountdown = nextFundingMs
-    ? (() => {
-        const diff = nextFundingMs - Date.now()
-        if (diff <= 0) return null
-        const h = Math.floor(diff / 3600000)
-        const m = Math.floor((diff % 3600000) / 60000)
-        return `${h}h ${m}m`
-      })()
-    : null
 
   // Exchanges pour le tableau funding
   const fundingRows = [
@@ -355,7 +368,7 @@ export default function DerivativesPage({ asset }) {
         {fundingCountdown && (
           <div style={{ padding: '7px 16px', borderTop: '1px solid rgba(255,255,255,.04)', display: 'flex', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Prochain funding Binance</span>
-            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--atm)' }}>{fundingCountdown}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: fundingColor }}>{fundingCountdown}</span>
           </div>
         )}
         {/* Spread Deribit − Binance */}

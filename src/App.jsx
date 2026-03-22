@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { version } from '../package.json'
 import LandingPage    from './pages/LandingPage.jsx'
 import MarketPage     from './pages/MarketPage.jsx'
@@ -7,6 +7,9 @@ import OptionsDataPage from './pages/OptionsDataPage.jsx'
 import SignalsPage    from './pages/SignalsPage.jsx'
 import TradePage      from './pages/TradePage.jsx'
 import OnChainPage    from './pages/OnChainPage.jsx'
+import ClockStatus    from './components/ClockStatus.jsx'
+import { syncServerClocks, SYNC_INTERVAL_MS } from './data_core/providers/clock_sync.js'
+import { setCachedClockSync } from './data_core/data_store/cache.js'
 import './App.css'
 
 const ASSETS = ['BTC', 'ETH']
@@ -55,6 +58,18 @@ export default function App() {
   const [inApp, setInApp] = useState(false)
   const [tab, setTab] = useState('market')
   const [asset, setAsset] = useState('BTC')
+  const [clockSync, setClockSync] = useState(null)
+
+  useEffect(() => {
+    const doSync = async () => {
+      const result = await syncServerClocks()
+      setCachedClockSync(result)
+      setClockSync(result)
+    }
+    doSync()
+    const timer = setInterval(doSync, SYNC_INTERVAL_MS)
+    return () => clearInterval(timer)
+  }, [])
 
   const forceUpdate = () => {
     if ('serviceWorker' in navigator) {
@@ -71,14 +86,14 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <AppHeader asset={asset} setAsset={setAsset} />
+      <AppHeader asset={asset} setAsset={setAsset} clockSync={clockSync} onClockSync={setClockSync} />
       <div className="app-content">
-        {tab === 'market'   && <MarketPage     asset={asset} />}
-        {tab === 'deriv'    && <DerivativesPage asset={asset} />}
-        {tab === 'options'  && <OptionsDataPage asset={asset} />}
-        {tab === 'signals'  && <SignalsPage     asset={asset} />}
-        {tab === 'trade'    && <TradePage       asset={asset} />}
-        {tab === 'onchain'  && <OnChainPage     asset={asset} />}
+        {tab === 'market'   && <MarketPage      asset={asset} />}
+        {tab === 'deriv'    && <DerivativesPage  asset={asset} clockSync={clockSync} />}
+        {tab === 'options'  && <OptionsDataPage  asset={asset} clockSync={clockSync} />}
+        {tab === 'signals'  && <SignalsPage      asset={asset} clockSync={clockSync} />}
+        {tab === 'trade'    && <TradePage        asset={asset} />}
+        {tab === 'onchain'  && <OnChainPage      asset={asset} />}
       </div>
       <BottomNav tab={tab} setTab={setTab} />
       <VersionBar version={version} forceUpdate={forceUpdate} />
@@ -86,7 +101,7 @@ export default function App() {
   )
 }
 
-function AppHeader({ asset, setAsset }) {
+function AppHeader({ asset, setAsset, clockSync, onClockSync }) {
   return (
     <header style={{
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -108,7 +123,9 @@ function AppHeader({ asset, setAsset }) {
         </span>
       </div>
 
-      <div style={{ position: 'relative' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <ClockStatus clockSync={clockSync} onSync={onClockSync} />
+        <div style={{ position: 'relative' }}>
         <select
           value={asset}
           onChange={e => setAsset(e.target.value)}
@@ -127,6 +144,7 @@ function AppHeader({ asset, setAsset }) {
         >
           <path d="M2 3.5L5 6.5L8 3.5" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round"/>
         </svg>
+        </div>
       </div>
     </header>
   )
