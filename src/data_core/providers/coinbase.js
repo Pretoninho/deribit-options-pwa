@@ -102,3 +102,27 @@ export async function getMarketSnapshot(asset) {
   const spot = await getSpot(asset).catch(() => null)
   return { spot }
 }
+
+/**
+ * Heure serveur Coinbase — synchronisation horloge cross-exchange.
+ *
+ * ATTENTION : Coinbase retourne des secondes (epoch), pas des ms.
+ * epoch × 1000 obligatoire pour comparer avec Deribit et Binance.
+ *
+ * Timeout réduit à 3s pour ne pas bloquer la sync.
+ * @returns {Promise<{ timestamp: number, source: 'coinbase' } | null>}
+ */
+export async function getCoinbaseTime() {
+  try {
+    const raw = await apiFetch('/time', {}, 3_000)
+    // ATTENTION : Coinbase retourne des secondes, pas des ms
+    // epoch × 1000 obligatoire pour comparer avec Deribit et Binance
+    const timestampMs = Number(raw.epoch) * 1000
+    if (Math.abs(timestampMs - Date.now()) > 5_000_000) {
+      console.error('[clock_sync] Probable unit error: Coinbase epoch not converted to ms')
+    }
+    return { timestamp: timestampMs, source: 'coinbase' }
+  } catch {
+    return null
+  }
+}

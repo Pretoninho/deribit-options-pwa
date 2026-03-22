@@ -286,3 +286,18 @@ export function extractExpiries(instruments) {
   )]
   return ts.sort((a, b) => a - b)
 }
+
+/**
+ * Heure serveur Deribit — synchronisation horloge cross-exchange.
+ * Retourne le timestamp en ms (natif Deribit).
+ * Timeout réduit à 3s pour ne pas bloquer la sync.
+ * @returns {Promise<{ timestamp: number, source: 'deribit' } | null>}
+ */
+export async function getDeribitTime() {
+  try {
+    const result = await apiFetch('get_time', {}, 3_000)
+    return { timestamp: Number(result), source: 'deribit' }
+  } catch {
+    return null
+  }
+}
