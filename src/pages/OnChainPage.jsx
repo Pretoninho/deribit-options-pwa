@@ -207,8 +207,6 @@ export default function OnChainPage({ asset }) {
   const [loading, setLoading] = useState(false)
   const [lastUpdate, setLastUpdate] = useState(null)
   const [error, setError] = useState(null)
-  const [noviceMode, setNoviceMode] = useState(false)
-
   const mainTimerRef = useRef(null)
   const whalesTimerRef = useRef(null)
 
@@ -516,58 +514,13 @@ export default function OnChainPage({ asset }) {
 
       {composite ? (
         <Card style={{ padding: '16px' }}>
-          <div style={{ display: 'flex', gap: 0, marginBottom: 16, background: 'rgba(255,255,255,.04)', borderRadius: 10, padding: 3 }}>
-            {[{ label: 'Expert', val: false }, { label: 'Novice', val: true }].map(({ label, val }) => (
-              <button
-                key={label}
-                onClick={() => setNoviceMode(val)}
-                style={{
-                  flex: 1, padding: '7px 0', border: 'none', borderRadius: 8, cursor: 'pointer',
-                  fontFamily: 'var(--sans)', fontWeight: 700, fontSize: 12,
-                  background: noviceMode === val ? 'var(--accent)' : 'transparent',
-                  color: noviceMode === val ? 'var(--bg)' : 'var(--text-muted)',
-                  transition: 'background .2s, color .2s',
-                }}
-              >
-                {label}
-              </button>
-            ))}
+          <div style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.7, marginBottom: 14 }}>
+            {composite.expert}
           </div>
-
-          {!noviceMode ? (
-            <div>
-              <div style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.7, marginBottom: 14 }}>
-                {composite.expert}
-              </div>
-              <div style={{ background: 'rgba(0,212,255,.06)', border: '1px solid rgba(0,212,255,.2)', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: 'var(--accent)', lineHeight: 1.6 }}>
-                <span style={{ fontFamily: 'var(--sans)', fontWeight: 700 }}>Action : </span>
-                {composite.action_expert}
-              </div>
-            </div>
-          ) : (
-            <div>
-              <div style={{ fontSize: 14, color: 'var(--text-dim)', fontStyle: 'italic', marginBottom: 12, lineHeight: 1.6 }}>
-                {composite.novice.metaphor}
-              </div>
-              {[
-                { label: 'Situation', val: composite.novice.situation, color: 'var(--text)' },
-                { label: 'Quoi faire', val: composite.novice.action, color: 'var(--accent)' },
-                { label: 'Potentiel', val: composite.novice.gain, color: 'var(--call)' },
-                { label: 'Risque', val: composite.novice.risk, color: 'var(--accent2)' },
-              ].map(({ label, val, color }) => (
-                <div key={label} style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--sans)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 3 }}>
-                    {label}
-                  </div>
-                  <div style={{ fontSize: 12, color, lineHeight: 1.6 }}>{val}</div>
-                </div>
-              ))}
-              <div style={{ background: 'rgba(0,212,255,.06)', border: '1px solid rgba(0,212,255,.2)', borderRadius: 10, padding: '10px 14px', marginTop: 4, fontSize: 12, color: 'var(--accent)', lineHeight: 1.6 }}>
-                <span style={{ fontFamily: 'var(--sans)', fontWeight: 700 }}>Action : </span>
-                {composite.action_novice}
-              </div>
-            </div>
-          )}
+          <div style={{ background: 'rgba(0,212,255,.06)', border: '1px solid rgba(0,212,255,.2)', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: 'var(--accent)', lineHeight: 1.6 }}>
+            <span style={{ fontFamily: 'var(--sans)', fontWeight: 700 }}>Action : </span>
+            {composite.action_expert}
+          </div>
         </Card>
       ) : (
         <Card>
