@@ -2,11 +2,11 @@
   "meta": {
     "version": 1,
     "asset": "ETH",
-    "generatedAt": 0,
+    "generatedAt": 1774244851272,
     "patternCount": 0,
-    "hash": "00000000",
     "prevHash": "00000000",
-    "chainLength": 0
+    "chainLength": 1,
+    "hash": "00ce5fa8"
   },
   "patterns": []
 }
