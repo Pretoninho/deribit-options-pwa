@@ -12,8 +12,215 @@
  *   - 'deribit:BTC:option:BTC-28MAR25-80000-C'
  */
 
+import { get as idbGet, set as idbSet } from 'idb-keyval'
+
 const DEFAULT_MAX_HISTORY = 100  // entrées par clé
 const DEFAULT_TTL_MS = 60_000   // 1 min — après ça, la donnée est "stale"
+
+// ── Hash FNV-1a 32 bits ───────────────────────────────────────────────────────
+
+/**
+ * Hash FNV-1a 32 bits — rapide, sans dépendance.
+ * @param {string} str
+ * @returns {string} hash hexadécimal 8 chars
+ */
+export function fnv1a(str) {
+  let h = 0x811c9dc5
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i)
+    h = (h * 0x01000193) >>> 0
+  }
+  return h.toString(16).padStart(8, '0')
+}
+
+/**
+ * Sérialise une valeur de façon déterministe et la hashe (FNV-1a).
+ * Exclut les champs temporels pour éviter les faux positifs de changement
+ * (les timestamps varient à chaque poll même si les données de marché sont identiques).
+ * @param {any} data
+ * @returns {string} hash FNV-1a
+ */
+export function hashData(data) {
+  const EXCLUDED = [
+    'timestamp', 'ts', 'time', 'serverTime',
+    'syncedAt', 'fetchedAt', 'updatedAt', 'raw',
+  ]
+
+  function clean(obj) {
+    if (typeof obj !== 'object' || obj === null) return obj
+    if (Array.isArray(obj)) return obj.map(clean)
+    const result = {}
+    for (const [k, v] of Object.entries(obj)) {
+      if (EXCLUDED.includes(k)) continue
+      result[k] = clean(v)
+    }
+    return result
+  }
+
+  try {
+    return fnv1a(JSON.stringify(clean(data)))
+  } catch {
+    return fnv1a(String(data))
+  }
+}
+
+// ── SmartCache changeLog persistence ─────────────────────────────────────────
+
+const CACHE_LOG_IDB_KEY = 'cache_changelog'
+const CACHE_LOG_MAX     = 2000
+
+/**
+ * Persiste une entrée du changeLog dans IndexedDB (fire-and-forget).
+ * @param {{ key: string, hash: string, ts: number, type: string }} entry
+ */
+async function _persistChangeLogEntry(entry) {
+  try {
+    const log = (await idbGet(CACHE_LOG_IDB_KEY)) ?? []
+    log.push(entry)
+    if (log.length > CACHE_LOG_MAX) log.splice(0, log.length - CACHE_LOG_MAX)
+    await idbSet(CACHE_LOG_IDB_KEY, log)
+  } catch (_) {}
+}
+
+/**
+ * Retourne le journal persisté des changements du SmartCache.
+ * @param {number} [limit=500]
+ * @returns {Promise<Array<{ key: string, hash: string, ts: number }>>}
+ */
+export async function getCacheChangeLog(limit = 500) {
+  try {
+    const log = (await idbGet(CACHE_LOG_IDB_KEY)) ?? []
+    return log.slice(-limit).reverse()
+  } catch (_) {
+    return []
+  }
+}
+
+/**
+ * Efface le journal persisté des changements du SmartCache.
+ */
+export async function clearCacheChangeLog() {
+  try {
+    await idbSet(CACHE_LOG_IDB_KEY, [])
+  } catch (_) {}
+}
+
+// ── SmartCache ────────────────────────────────────────────────────────────────
+
+/**
+ * SmartCache — cache avec détection de changement par hash FNV-1a.
+ * Permet d'éviter les re-renders React inutiles en ne signalant
+ * que les données réellement modifiées.
+ */
+export class SmartCache {
+  constructor() {
+    /** @type {Map<string, { hash: string, data: any, timestamp: number }>} */
+    this._entries = new Map()
+    /** @type {Map<string, number>} — timestamp de la dernière modification par clé */
+    this._changedAt = new Map()
+    /**
+     * Journal circulaire des changements détectés (max 500 entrées en mémoire).
+     * Chaque entrée : { key: string, hash: string, ts: number }
+     * @type {Array<{ key: string, hash: string, ts: number }>}
+     */
+    this.changeLog = []
+
+    // Hydrater le changeLog depuis IndexedDB au démarrage (async, non-bloquant)
+    this._hydrateFromIDB()
+  }
+
+  /** Recharge les 500 dernières entrées persistées en mémoire. */
+  async _hydrateFromIDB() {
+    try {
+      const persisted = (await idbGet(CACHE_LOG_IDB_KEY)) ?? []
+      this.changeLog = persisted.slice(-500)
+    } catch (_) {}
+  }
+
+  /**
+   * Stocke une valeur et retourne true si elle a changé.
+   * @param {string} key
+   * @param {any} data
+   * @returns {boolean} true si les données sont différentes du dernier set
+   */
+  set(key, data) {
+    const newHash = hashData(data)
+    const existing = this._entries.get(key)
+    const changed = !existing || existing.hash !== newHash
+
+    const now = Date.now()
+    this._entries.set(key, { hash: newHash, data, timestamp: now })
+    if (changed) {
+      this._changedAt.set(key, now)
+      const entry = { key, hash: newHash, ts: now, type: 'cache_change' }
+      this.changeLog.push(entry)
+      if (this.changeLog.length > 500) this.changeLog.shift()
+      // Persistance async fire-and-forget — ne bloque pas set()
+      _persistChangeLogEntry(entry)
+    }
+
+    return changed
+  }
+
+  /**
+   * Retourne la valeur stockée, ou null si absente.
+   * @param {string} key
+   * @returns {any|null}
+   */
+  get(key) {
+    return this._entries.get(key)?.data ?? null
+  }
+
+  /**
+   * Retourne true si la clé a changé depuis le dernier set.
+   * @param {string} key
+   * @param {string} [previousHash] — hash précédent à comparer
+   * @returns {boolean}
+   */
+  hasChanged(key, previousHash) {
+    const entry = this._entries.get(key)
+    if (!entry) return false
+    if (previousHash !== undefined) return entry.hash !== previousHash
+    return this._changedAt.get(key) === entry.timestamp
+  }
+
+  /**
+   * Retourne le hash actuel d'une clé.
+   * @param {string} key
+   * @returns {string|null}
+   */
+  getHash(key) {
+    return this._entries.get(key)?.hash ?? null
+  }
+
+  /**
+   * Retourne les clés modifiées depuis un timestamp donné.
+   * @param {number} sinceMs — timestamp unix ms
+   * @returns {string[]}
+   */
+  getChangedKeys(sinceMs) {
+    const result = []
+    for (const [key, ts] of this._changedAt) {
+      if (ts >= sinceMs) result.push(key)
+    }
+    return result
+  }
+
+  /** Supprime une clé. */
+  delete(key) {
+    this._entries.delete(key)
+    this._changedAt.delete(key)
+  }
+
+  /** Vide le cache. */
+  clear() {
+    this._entries.clear()
+    this._changedAt.clear()
+  }
+}
+
+// Instance partagée pour les composants React
+export const smartCache = new SmartCache()
 
 class DataStore {
   constructor() {
@@ -220,6 +427,26 @@ export const dataStore = new DataStore()
 
 // ── Clés canoniques ───────────────────────────────────────────────────────────
 // Helpers pour construire des clés cohérentes
+
+// ── Clock sync helpers ────────────────────────────────────────────────────────
+
+const CLOCK_SYNC_CACHE_KEY = 'system:clock_sync'
+
+/**
+ * Retourne la dernière synchronisation d'horloge depuis le SmartCache.
+ * @returns {object|null}
+ */
+export function getCachedClockSync() {
+  return smartCache.get(CLOCK_SYNC_CACHE_KEY) ?? null
+}
+
+/**
+ * Enregistre le résultat de syncServerClocks() dans le SmartCache.
+ * @param {object} sync
+ */
+export function setCachedClockSync(sync) {
+  smartCache.set(CLOCK_SYNC_CACHE_KEY, sync)
+}
 
 export const CacheKey = {
   spot:            (source, asset) => `${source}:${asset}:spot`,

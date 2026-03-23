@@ -1,52 +1,184 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { version } from '../package.json'
+import * as coinbase from './data_core/providers/coinbase.js'
 import LandingPage    from './pages/LandingPage.jsx'
 import MarketPage     from './pages/MarketPage.jsx'
 import DerivativesPage from './pages/DerivativesPage.jsx'
 import OptionsDataPage from './pages/OptionsDataPage.jsx'
 import SignalsPage    from './pages/SignalsPage.jsx'
 import TradePage      from './pages/TradePage.jsx'
+import OnChainPage    from './pages/OnChainPage.jsx'
+import AuditPage      from './pages/AuditPage.jsx'
+import ClockStatus    from './components/ClockStatus.jsx'
+import AuditBanner    from './components/AuditBanner.jsx'
+import NavDrawer      from './components/NavDrawer.jsx'
+import VLogo          from './components/VLogo.jsx'
+import { getSignalHistory } from './data_processing/signals/signal_engine.js'
+import { setupSettlementWatcher } from './data_processing/signals/settlement_tracker.js'
+import { syncServerClocks, SYNC_INTERVAL_MS } from './data_core/providers/clock_sync.js'
+import { setCachedClockSync, dataStore, CacheKey } from './data_core/data_store/cache.js'
+import { checkNotifications, notifyAnomaly } from './data_processing/signals/notification_engine.js'
+import { requestPermission } from './data_processing/signals/notification_manager.js'
+import { runInitialImport } from './data_processing/signals/snapshot_importer.js'
+import NotificationSettingsPage from './pages/NotificationSettingsPage.jsx'
 import './App.css'
 
-const ASSETS = ['BTC', 'ETH']
+// ── Constantes ────────────────────────────────────────────────────────────────
 
-const TABS = [
-  {
-    id: 'market', label: 'Market',
-    icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <rect x="2" y="7" width="4" height="13"/><rect x="10" y="3" width="4" height="17"/><rect x="18" y="11" width="4" height="9"/>
-    </svg>
-  },
-  {
-    id: 'deriv', label: 'Derivés',
-    icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M7 16V4m0 0L3 8m4-4 4 4"/><path d="M17 8v12m0 0 4-4m-4 4-4-4"/>
-    </svg>
-  },
-  {
-    id: 'options', label: 'Options',
-    icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-    </svg>
-  },
-  {
-    id: 'signals', label: 'Signaux',
-    icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-    </svg>
-  },
-  {
-    id: 'trade', label: 'Trade',
-    icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
-    </svg>
-  },
-]
+const ANOMALY_LOG_KEY   = 'veridex_anomaly_log'
+const RECENT_WINDOW_MS  = 10 * 60 * 1000
+
+const PAGE_NAMES = {
+  market:        'Market',
+  deriv:         'Dérivés',
+  options:       'Options',
+  signals:       'Signaux',
+  trade:         'Trade',
+  onchain:       'On-Chain',
+  audit:         'Audit',
+  notifications: 'Notifications',
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function getAuditAlerts() {
+  try {
+    const log = JSON.parse(localStorage.getItem(ANOMALY_LOG_KEY) || '[]')
+    const now = Date.now()
+    return log.filter(e => now - e.timestamp < RECENT_WINDOW_MS).length
+  } catch (_) {
+    return 0
+  }
+}
+
+function getNextFundingCountdown() {
+  const now  = new Date()
+  const h    = now.getUTCHours()
+  const m    = now.getUTCMinutes()
+  // Binance / Deribit : fixings à 00h, 08h, 16h UTC
+  const next = [0, 8, 16, 24].find(i => i > h) ?? 24
+  const diff = next * 60 - (h * 60 + m)
+  return diff >= 60 ? `${Math.floor(diff / 60)}h` : `${diff}m`
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [inApp, setInApp] = useState(false)
-  const [tab, setTab] = useState('market')
-  const [asset, setAsset] = useState('BTC')
+  const [inApp,       setInApp]       = useState(false)
+  const [tab,         setTab]         = useState('market')
+  const [asset,       setAsset]       = useState('BTC')
+  const [drawerOpen,  setDrawerOpen]  = useState(false)
+  const [clockSync,   setClockSync]   = useState(null)
+  const [btcPrice,    setBtcPrice]    = useState(null)
+  const [ethPrice,    setEthPrice]    = useState(null)
+  const [signalScore, setSignalScore] = useState(null)
+  const [auditAlerts, setAuditAlerts] = useState(0)
+  const [nextFunding, setNextFunding] = useState(() => getNextFundingCountdown())
+
+  // Synchronisation horloges
+  useEffect(() => {
+    const doSync = async () => {
+      const result = await syncServerClocks()
+      setCachedClockSync(result)
+      setClockSync(result)
+    }
+    doSync()
+    const timer = setInterval(doSync, SYNC_INTERVAL_MS)
+    return () => clearInterval(timer)
+  }, [])
+
+  // Import initial des snapshots de patterns (fire-and-forget)
+  useEffect(() => {
+    runInitialImport('BTC').catch(() => {})
+    runInitialImport('ETH').catch(() => {})
+  }, [])
+
+  // Watcher settlement quotidien Deribit (08:00 UTC)
+  useEffect(() => {
+    const getSpot = (asset) =>
+      dataStore.get(CacheKey.spot('deribit', asset), true)?.price ?? null
+
+    const getIVRank = (asset) => {
+      const dvol = dataStore.get(CacheKey.dvol('deribit', asset), true)
+      if (!dvol) return null
+      const range = (dvol.monthMax ?? 0) - (dvol.monthMin ?? 0)
+      if (!range) return null
+      return Math.round(((dvol.current - dvol.monthMin) / range) * 100)
+    }
+
+    const getInstruments = (asset) =>
+      dataStore.get(CacheKey.instruments('deribit', asset), true)?.instruments ?? []
+
+    const cleanup = setupSettlementWatcher(getSpot, getIVRank, getInstruments)
+    return cleanup
+  }, [])
+
+  // Demande de permission notifications (une seule fois, à l'entrée dans l'app)
+  useEffect(() => {
+    if (!inApp) return
+    // Ne demander qu'une fois (permission 'default') — jamais sans interaction utilisateur
+    if ('Notification' in window && Notification.permission === 'default') {
+      // Délai de 3s pour ne pas interrompre immédiatement l'entrée dans l'app
+      const timer = setTimeout(() => requestPermission().catch(() => {}), 3000)
+      return () => clearTimeout(timer)
+    }
+  }, [inApp])
+
+  // Polling de fond pour les vérifications de notifications (toutes les 60s)
+  useEffect(() => {
+    if (!inApp) return
+
+    const check = async () => {
+      for (const asset of ['BTC', 'ETH']) {
+        try {
+          const spot    = dataStore.get(CacheKey.spot('deribit', asset), true)?.price ?? null
+          const dvol    = dataStore.get(CacheKey.dvol('deribit', asset), true)
+          const funding = dataStore.get(CacheKey.funding('deribit', asset), true)
+          const ivRank  = dvol
+            ? Math.round(((dvol.current - dvol.monthMin) / ((dvol.monthMax - dvol.monthMin) || 1)) * 100)
+            : null
+          const fundingAnn = funding?.rateAnn ?? funding?.avgAnn7d ?? null
+
+          await checkNotifications(asset, {
+            spotPrice:  spot,
+            ivRank,
+            fundingAnn,
+          })
+        } catch (_) {}
+      }
+    }
+
+    check()
+    const timer = setInterval(check, 60_000)
+    return () => clearInterval(timer)
+  }, [inApp])
+
+  // Prix landing
+  useEffect(() => {
+    coinbase.getSpot('BTC').then(p => setBtcPrice(p?.price ?? null)).catch(() => {})
+    coinbase.getSpot('ETH').then(p => setEthPrice(p?.price ?? null)).catch(() => {})
+  }, [])
+
+  // Dernier score signal (badge drawer)
+  useEffect(() => {
+    getSignalHistory(null, 10).then(h => {
+      if (h.length > 0) setSignalScore(h[h.length - 1].score)
+    }).catch(() => {})
+  }, [tab]) // recharge quand on change de page (ex: après refresh Signaux)
+
+  // Compteur anomalies audit (badge drawer)
+  useEffect(() => {
+    const check = () => setAuditAlerts(getAuditAlerts())
+    check()
+    const timer = setInterval(check, 30_000)
+    return () => clearInterval(timer)
+  }, [])
+
+  // Countdown funding (badge Dérivés)
+  useEffect(() => {
+    const timer = setInterval(() => setNextFunding(getNextFundingCountdown()), 60_000)
+    return () => clearInterval(timer)
+  }, [])
 
   const forceUpdate = () => {
     if ('serviceWorker' in navigator) {
@@ -59,88 +191,107 @@ export default function App() {
     }
   }
 
-  if (!inApp) return <LandingPage onEnter={() => setInApp(true)} version={version} />
+  if (!inApp) return (
+    <LandingPage
+      onEnter={() => setInApp(true)}
+      btcPrice={btcPrice}
+      ethPrice={ethPrice}
+    />
+  )
 
   return (
     <div className="app-shell">
-      <AppHeader asset={asset} setAsset={setAsset} />
+
+      {/* Header global fixé */}
+      <GlobalHeader
+        tab={tab}
+        asset={asset}
+        clockSync={clockSync}
+        onClockSync={setClockSync}
+        onOpenDrawer={() => setDrawerOpen(true)}
+        onLanding={() => setInApp(false)}
+      />
+
+      {/* Contenu des pages */}
       <div className="app-content">
-        {tab === 'market'   && <MarketPage     asset={asset} />}
-        {tab === 'deriv'    && <DerivativesPage asset={asset} />}
-        {tab === 'options'  && <OptionsDataPage asset={asset} />}
-        {tab === 'signals'  && <SignalsPage     asset={asset} />}
-        {tab === 'trade'    && <TradePage       asset={asset} />}
+        {tab === 'market'        && <MarketPage             asset={asset} />}
+        {tab === 'deriv'         && <DerivativesPage        asset={asset} clockSync={clockSync} />}
+        {tab === 'options'       && <OptionsDataPage        asset={asset} clockSync={clockSync} />}
+        {tab === 'signals'       && <SignalsPage            asset={asset} clockSync={clockSync} />}
+        {tab === 'trade'         && <TradePage              asset={asset} />}
+        {tab === 'onchain'       && <OnChainPage            asset={asset} />}
+        {tab === 'audit'         && <AuditPage />}
+        {tab === 'notifications' && <NotificationSettingsPage />}
+        <VersionBar version={version} forceUpdate={forceUpdate} />
       </div>
-      <BottomNav tab={tab} setTab={setTab} />
-      <VersionBar version={version} forceUpdate={forceUpdate} />
+
+      {/* Bandeau anomalie */}
+      <AuditBanner onNavigateToAudit={() => setTab('audit')} />
+
+      {/* Drawer de navigation */}
+      {drawerOpen && (
+        <NavDrawer
+          isOpen={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          activePage={tab}
+          onNavigate={(page) => setTab(page)}
+          activeAsset={asset}
+          onAssetChange={(a) => setAsset(a)}
+          signalScore={signalScore}
+          auditAlerts={auditAlerts}
+          nextFunding={nextFunding}
+        />
+      )}
     </div>
   )
 }
 
-function AppHeader({ asset, setAsset }) {
-  return (
-    <header style={{
-      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      padding: '10px 16px', background: 'var(--surface)',
-      borderBottom: '1px solid var(--border)', flexShrink: 0,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <div style={{
-          width: 28, height: 28, borderRadius: 8,
-          background: 'rgba(0,212,255,.15)', border: '1px solid rgba(0,212,255,.3)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2.5">
-            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-          </svg>
-        </div>
-        <span style={{ fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 15, color: 'var(--text)' }}>
-          Option<span style={{ color: 'var(--accent)' }}>Lab</span>
-        </span>
-      </div>
+// ── Header global ─────────────────────────────────────────────────────────────
 
-      <div style={{ position: 'relative' }}>
-        <select
-          value={asset}
-          onChange={e => setAsset(e.target.value)}
-          style={{
-            appearance: 'none', background: 'rgba(255,255,255,.06)',
-            border: '1px solid var(--border)', borderRadius: 8,
-            color: 'var(--accent)', fontFamily: 'var(--sans)', fontWeight: 700,
-            fontSize: 13, padding: '5px 28px 5px 12px', cursor: 'pointer', outline: 'none',
-          }}
-        >
-          {ASSETS.map(a => <option key={a} value={a}>{a}</option>)}
-        </select>
-        <svg
-          width="10" height="10" viewBox="0 0 10 10" fill="none"
-          style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}
-        >
-          <path d="M2 3.5L5 6.5L8 3.5" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round"/>
-        </svg>
+function GlobalHeader({ tab, asset, clockSync, onClockSync, onOpenDrawer, onLanding }) {
+  return (
+    <header className="app-header-global">
+      <div className="header-inner">
+
+        {/* Gauche : logo (→ landing) + hamburger (→ drawer) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            onClick={onLanding}
+            aria-label="Accueil Veridex"
+            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+          >
+            <VLogo size={28} />
+          </button>
+          <button className="hamburger-btn" onClick={onOpenDrawer} aria-label="Menu">
+            <div className="hamburger-line" style={{ width: 14 }} />
+            <div className="hamburger-line" style={{ width: 10 }} />
+            <div className="hamburger-line" style={{ width: 14 }} />
+          </button>
+        </div>
+
+        {/* Centre : titre page active + ClockStatus */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <ClockStatus clockSync={clockSync} onSync={onClockSync} />
+          <span className="header-title">{PAGE_NAMES[tab] ?? tab}</span>
+        </div>
+
+        {/* Droite : asset pill (tap → drawer) */}
+        <button className="asset-pill-header" onClick={onOpenDrawer}>
+          {asset}
+        </button>
+
       </div>
     </header>
   )
 }
 
-function BottomNav({ tab, setTab }) {
-  return (
-    <nav className="bottom-nav">
-      {TABS.map(t => (
-        <button key={t.id} className={`nav-btn${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}>
-          <span className="nav-icon">{t.icon}</span>
-          <span className="nav-label">{t.label}</span>
-        </button>
-      ))}
-    </nav>
-  )
-}
+// ── Version bar ───────────────────────────────────────────────────────────────
 
 function VersionBar({ version, forceUpdate }) {
   return (
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-      paddingBottom: 2, flexShrink: 0,
+      padding: '8px 0 4px', flexShrink: 0,
     }}>
       <span style={{ fontSize: 9, color: 'var(--text-muted)', opacity: .35, letterSpacing: '1px' }}>v{version}</span>
       <button onClick={forceUpdate} style={{

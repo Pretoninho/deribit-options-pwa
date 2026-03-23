@@ -5,6 +5,8 @@
  * Source canonique — migré depuis src/utils/greeks.js et src/utils/api.js.
  */
 
+import { getDaysUntilCorrected } from '../../data_core/providers/clock_sync.js'
+
 // ── Fonctions mathématiques ───────────────────────────────────────────────────
 
 function normalPdf(x) {
@@ -30,10 +32,18 @@ function normalCdf(x) {
 /**
  * Calcule les Greeks d'une option via Black-Scholes.
  *
- * @param {{ type: 'call'|'put', S: number, K: number, T: number, sigma: number, r?: number }}
+ * @param {{
+ *   type: 'call'|'put', S: number, K: number, T: number, sigma: number, r?: number,
+ *   expiry?: number|null,    — timestamp ms (optionnel, prioritaire sur T si fourni)
+ *   clockSync?: object|null  — résultat de syncServerClocks() pour corriger T
+ * }}
  * @returns {{ delta, gamma, theta, vega } | null}
  */
-export function calcOptionGreeks({ type, S, K, T, sigma, r = 0 }) {
+export function calcOptionGreeks({ type, S, K, T: Tparam, sigma, r = 0, expiry = null, clockSync = null }) {
+  // Si expiry fourni, recalculer T en années avec correction horloge
+  const T = expiry != null
+    ? getDaysUntilCorrected(expiry, clockSync) / 365
+    : Tparam
   if (!Number.isFinite(S) || !Number.isFinite(K) || !Number.isFinite(T) || !Number.isFinite(sigma)) return null
   if (S <= 0 || K <= 0 || T <= 0 || sigma <= 0) return null
   if (type !== 'call' && type !== 'put') return null

@@ -36,12 +36,42 @@
  */
 
 // ── Exports : store ───────────────────────────────────────────────────────────
-export { dataStore, CacheKey } from './data_store/cache.js'
+export { dataStore, CacheKey, SmartCache, smartCache, fnv1a, hashData } from './data_store/cache.js'
+export { POLL, HASH_CONFIG } from './data_store/hash_config.js'
+
+export {
+  getCacheChangeLog,
+  clearCacheChangeLog,
+} from './data_store/cache.js'
+
+export {
+  buildSearchIndex,
+  filterByHash,
+  filterByDate,
+  filterByEvent,
+  applyFilters,
+} from './data_store/hash_search.js'
 
 // ── Exports : providers ───────────────────────────────────────────────────────
 export * as deribit  from './providers/deribit.js'
 export * as binance  from './providers/binance.js'
 export * as coinbase from './providers/coinbase.js'
+export * as onchain  from './providers/onchain.js'
+
+// ── Exports : clock sync ──────────────────────────────────────────────────────
+export {
+  syncServerClocks,
+  getNextFundingTime,
+  getTimeCorrected,
+  getDaysUntilCorrected,
+  SYNC_INTERVAL_MS,
+} from './providers/clock_sync.js'
+
+export { getDeribitTime }  from './providers/deribit.js'
+export { getBinanceTime }  from './providers/binance.js'
+export { getCoinbaseTime } from './providers/coinbase.js'
+
+export { getCachedClockSync, setCachedClockSync } from './data_store/cache.js'
 
 // ── Exports : streams ─────────────────────────────────────────────────────────
 export { wsStream, DeribitChannels }     from './streams/websocket.js'
@@ -73,7 +103,107 @@ export {
   normalizeCoinbaseTicker,
   // Utilitaires
   mergeSpotTickers,
+  validateDataFreshness,
+  normalizeOnChain,
 } from './normalizers/format_data.js'
+
+// ── Exports : Max Pain ────────────────────────────────────────────────────────
+export {
+  parseInstrument,
+  calculateMaxPain,
+  calculateMaxPainByExpiry,
+  interpretMaxPain,
+} from '../data_processing/volatility/max_pain.js'
+
+// ── Exports : Settlement Tracker ──────────────────────────────────────────────
+export {
+  setupSettlementWatcher,
+  captureSettlement,
+  getSettlementHistory,
+  getSettlementByDate,
+  getSettlementByHash,
+  clearSettlementHistory,
+} from '../data_processing/signals/settlement_tracker.js'
+
+// ── Exports : Publish Trigger ─────────────────────────────────────────────────
+export {
+  TRIGGER_TYPES,
+  TRIGGER_META,
+  detectTrigger,
+  detectSettlementTrigger,
+  markAsPublished,
+  isAlreadyPublished,
+} from '../data_processing/signals/publish_trigger.js'
+
+// ── Exports : Twitter Generator ───────────────────────────────────────────────
+export {
+  generateTwitterThread,
+} from '../data_processing/signals/twitter_generator.js'
+
+// ── Exports : Notification Engine ─────────────────────────────────────────────
+export {
+  checkNotifications,
+  notifyAnomaly,
+} from '../data_processing/signals/notification_engine.js'
+
+// ── Exports : Notification Manager ────────────────────────────────────────────
+export {
+  DEFAULT_THRESHOLDS,
+  requestPermission,
+  getPermissionStatus,
+  getThresholds,
+  updateThreshold,
+  resetThresholds,
+  sendNotification,
+  getNotificationHistory,
+  clearNotificationHistory,
+} from '../data_processing/signals/notification_manager.js'
+
+// ── Exports : signals & fingerprint ──────────────────────────────────────────
+export {
+  detectMarketAnomaly,
+  hashMarketState,
+  saveSignal,
+  getSignalHistory,
+  getAnomalyLog,
+  clearAnomalyLog,
+} from '../data_processing/signals/signal_engine.js'
+
+export {
+  detectExchangeFlowSignal,
+  detectMempoolSignal,
+  detectMinerSignal,
+  compositeOnChainSignal,
+} from '../data_processing/signals/onchain_signals.js'
+
+export {
+  createFingerprint,
+  recordPattern,
+  updateOutcomes,
+  getPatternStats,
+  getAllPatterns,
+} from '../data_processing/signals/market_fingerprint.js'
+
+// ── Exports : Snapshot Generator ──────────────────────────────────────────────
+export {
+  SNAPSHOT_VERSION,
+  MIN_OCCURRENCES_TO_EXPORT,
+  GENESIS_HASH,
+  generateSnapshot,
+  verifySnapshot,
+  snapshotToJSON,
+  snapshotFromJSON,
+  getSnapshotHistory,
+} from '../data_processing/signals/snapshot_generator.js'
+
+// ── Exports : Snapshot Importer ───────────────────────────────────────────────
+export {
+  shouldImportSnapshot,
+  importSnapshot,
+  runInitialImport,
+  getImportState,
+  resetImportState,
+} from '../data_processing/signals/snapshot_importer.js'
 
 // ── Facade DataCore ───────────────────────────────────────────────────────────
 // Interface de haut niveau pour initialiser et piloter le data core.

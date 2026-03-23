@@ -10,6 +10,7 @@ import { useState, useEffect, useRef } from 'react'
 import * as deribit  from '../data_core/providers/deribit.js'
 import * as binance  from '../data_core/providers/binance.js'
 import * as coinbase from '../data_core/providers/coinbase.js'
+import { getNextFundingTime } from '../data_core/providers/clock_sync.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -138,6 +139,24 @@ function TableHead({ cols, firstLeft = true }) {
 
 // ── Page principale ───────────────────────────────────────────────────────────
 
+// ── Hook countdown funding ────────────────────────────────────────────────────
+
+function useFundingCountdown() {
+  const [countdown, setCountdown] = useState(() => getNextFundingTime())
+  useEffect(() => {
+    const timer = setInterval(() => setCountdown(getNextFundingTime()), 60_000)
+    return () => clearInterval(timer)
+  }, [])
+  return countdown
+}
+
+function countdownColor(msRemaining) {
+  if (msRemaining < 15 * 60_000)       return '#ff4d6d'  // < 15 min → rouge
+  if (msRemaining < 60 * 60_000)       return '#ffa800'  // < 1 h    → orange
+  if (msRemaining < 2 * 60 * 60_000)   return '#ffa800'  // < 2 h    → orange
+  return 'var(--call)'                                    // > 2 h    → vert
+}
+
 export default function DerivativesPage({ asset }) {
   const [state, setState] = useState({
     spot:         null,
@@ -150,7 +169,6 @@ export default function DerivativesPage({ asset }) {
     dOI:          null,
     bOI:          null,
     liquidations: null,
-    deliveries:   null,
     futures:      [],
   })
   const [loading,    setLoading]    = useState(false)
@@ -170,7 +188,7 @@ export default function DerivativesPage({ asset }) {
     try {
       const [
         spotRes, cSpotRes, dFundRes, bFundRes, dFundHistRes,
-        sentRes, tvRes, dOIRes, bOIRes, liqRes, delRes, instrRes,
+        sentRes, tvRes, dOIRes, bOIRes, liqRes, instrRes,
       ] = await Promise.allSettled([
         deribit.getSpot(asset),
         coinbase.getSpot(asset),
@@ -182,7 +200,6 @@ export default function DerivativesPage({ asset }) {
         deribit.getOpenInterest(asset),
         binance.getOpenInterest(asset),
         binance.getLiquidations(asset),
-        deribit.getDeliveryPrices(asset),
         deribit.getInstruments(asset, 'future'),
       ])
 
@@ -232,7 +249,6 @@ export default function DerivativesPage({ asset }) {
         dOI:          dOIRes.status       === 'fulfilled' ? dOIRes.value       : null,
         bOI:          bOIRes.status       === 'fulfilled' ? bOIRes.value       : null,
         liquidations: liqRes.status       === 'fulfilled' ? liqRes.value       : null,
-        deliveries:   delRes.status       === 'fulfilled' ? delRes.value       : null,
         futures:      futureRows,
       })
       setLastUpdate(new Date())
@@ -243,7 +259,13 @@ export default function DerivativesPage({ asset }) {
   }
 
   const { spot, cSpot, dFunding, bFunding, dFundingHist, sentiment, takerVol,
-          dOI, bOI, liquidations, deliveries, futures } = state
+          dOI, bOI, liquidations, futures } = state
+
+  const { hoursRemaining, minutesRemaining, msRemaining } = useFundingCountdown()
+  const fundingCountdown = hoursRemaining > 0
+    ? `${hoursRemaining}h ${minutesRemaining}m`
+    : `${minutesRemaining}m`
+  const fundingColor = countdownColor(msRemaining)
 
   const avgFunding30 = dFundingHist?.history?.length
     ? dFundingHist.history.reduce((s, r) => s + (safe(r.rateAnn) ?? 0), 0) / dFundingHist.history.length
@@ -252,17 +274,6 @@ export default function DerivativesPage({ asset }) {
   const bestBasisAnn = futures
     .filter(r => !r.isPerp && safe(r.basisAnn) !== null)
     .reduce((best, r) => (best === null || r.basisAnn > best ? r.basisAnn : best), null)
-
-  const nextFundingMs = safe(bFunding?.nextFundingTime)
-  const fundingCountdown = nextFundingMs
-    ? (() => {
-        const diff = nextFundingMs - Date.now()
-        if (diff <= 0) return null
-        const h = Math.floor(diff / 3600000)
-        const m = Math.floor((diff % 3600000) / 60000)
-        return `${h}h ${m}m`
-      })()
-    : null
 
   // Exchanges pour le tableau funding
   const fundingRows = [
@@ -358,7 +369,7 @@ export default function DerivativesPage({ asset }) {
         {fundingCountdown && (
           <div style={{ padding: '7px 16px', borderTop: '1px solid rgba(255,255,255,.04)', display: 'flex', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Prochain funding Binance</span>
-            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--atm)' }}>{fundingCountdown}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: fundingColor }}>{fundingCountdown}</span>
           </div>
         )}
         {/* Spread Deribit − Binance */}
@@ -573,27 +584,6 @@ export default function DerivativesPage({ asset }) {
           </div>
         )}
       </div>
-
-      {/* ── Prix de règlement Deribit ── */}
-      {deliveries?.deliveries?.length > 0 && (
-        <>
-          <SectionTitle badge="Deribit · Options settlement">Prix de règlement</SectionTitle>
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
-            {deliveries.deliveries.slice(-6).reverse().map((d, i, arr) => (
-              <div key={i} style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                padding: '9px 16px',
-                borderBottom: i < arr.length - 1 ? '1px solid rgba(255,255,255,.04)' : 'none',
-              }}>
-                <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--sans)' }}>{d.date}</span>
-                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', fontFamily: 'var(--sans)' }}>
-                  {fmtPrice(d.price, asset)}
-                </span>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
 
       {lastUpdate && (
         <div style={{ textAlign: 'center', fontSize: 10, color: 'var(--text-muted)', opacity: .5, marginTop: 12, marginBottom: 4 }}>

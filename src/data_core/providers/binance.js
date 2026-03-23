@@ -251,6 +251,21 @@ export async function getCoinMPerp(asset) {
 }
 
 /**
+ * Heure serveur Binance — synchronisation horloge cross-exchange.
+ * Retourne le timestamp en ms (natif Binance : champ serverTime).
+ * Timeout réduit à 3s pour ne pas bloquer la sync.
+ * @returns {Promise<{ timestamp: number, source: 'binance' } | null>}
+ */
+export async function getBinanceTime() {
+  try {
+    const raw = await apiFetch(SPOT_BASE, '/api/v3/time', {}, 3_000)
+    return { timestamp: Number(raw.serverTime), source: 'binance' }
+  } catch {
+    return null
+  }
+}
+
+/**
  * Snapshot marché Binance : spot + perp + funding + OI
  * @param {'BTC'|'ETH'} asset
  */
