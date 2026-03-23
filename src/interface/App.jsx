@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { version } from '../package.json'
+import { version } from '../../package.json'
 import LandingPage    from './pages/LandingPage.jsx'
 import MarketPage     from './pages/MarketPage.jsx'
 import DerivativesPage from './pages/DerivativesPage.jsx'
