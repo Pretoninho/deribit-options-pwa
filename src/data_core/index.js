@@ -62,8 +62,7 @@ export {
   getOnChainSnapshot,
   getBlockchainStats,
   getMempoolData,
-  getGlassnodeExchangeFlow,
-  getCryptoQuantFlow,
+  getExchangeFlows,
   getHashRateHistory,
   getFearGreedIndex,
   getWhaleTransactions,
@@ -137,20 +136,11 @@ export {
   clearSettlementHistory,
 } from '../data_processing/signals/settlement_tracker.js'
 
-// ── Exports : Publish Trigger ─────────────────────────────────────────────────
+// ── Exports : Insight Generator ───────────────────────────────────────────────
 export {
-  TRIGGER_TYPES,
-  TRIGGER_META,
-  detectTrigger,
-  detectSettlementTrigger,
-  markAsPublished,
-  isAlreadyPublished,
-} from '../data_processing/signals/publish_trigger.js'
-
-// ── Exports : Twitter Generator ───────────────────────────────────────────────
-export {
-  generateTwitterThread,
-} from '../data_processing/signals/twitter_generator.js'
+  generateInsight,
+  clearInsightCache,
+} from '../data_processing/signals/insight_generator.js'
 
 // ── Exports : Notification Engine ─────────────────────────────────────────────
 export {
@@ -186,6 +176,7 @@ export {
   detectMempoolSignal,
   detectMinerSignal,
   compositeOnChainSignal,
+  interpretExchangeFlowsExpert,
   interpretMempoolExpert,
   interpretFearGreedExpert,
   interpretWhalesExpert,

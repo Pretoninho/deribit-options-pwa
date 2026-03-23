@@ -1,19 +1,12 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { getDVOL, getFundingRate, getRealizedVol, getFutures, getFuturePrice, getSpot } from '../utils/api.js'
 import { computeSignal, saveSignal, hashMarketState } from '../data_processing/signals/signal_engine.js'
-import { interpretSignal }       from '../data_processing/signals/signal_interpreter.js'
-import { getOnChainSnapshot }    from '../data_core/providers/onchain.js'
-import { normalizeOnChain }      from '../data_core/normalizers/format_data.js'
-import * as binanceProvider      from '../data_core/providers/binance.js'
-import * as deribitProvider      from '../data_core/providers/deribit.js'
-import { generateNoviceContent } from '../data_processing/signals/novice_generator.js'
-import { DEFAULT_TONE }          from '../data_processing/signals/tone_config.js'
-import { detectTrigger, detectSettlementTrigger, markAsPublished } from '../data_processing/signals/publish_trigger.js'
-import { generateTwitterThread } from '../data_processing/signals/twitter_generator.js'
-import ToneSelector              from '../components/ToneSelector.jsx'
-import PublishPanel              from '../components/PublishPanel.jsx'
-
-const LS_TONE_KEY = 'selected_tone'
+import { interpretSignal }    from '../data_processing/signals/signal_interpreter.js'
+import { getOnChainSnapshot } from '../data_core/providers/onchain.js'
+import { normalizeOnChain }   from '../data_core/normalizers/format_data.js'
+import * as binanceProvider   from '../data_core/providers/binance.js'
+import * as deribitProvider   from '../data_core/providers/deribit.js'
+import { generateInsight }    from '../data_processing/signals/insight_generator.js'
 
 // ── Sous-composants ──────────────────────────────────────────────────────────
 
@@ -52,21 +45,57 @@ function Skeleton({ width = '100%', height = 14, style }) {
   )
 }
 
-function NoviceSkeleton() {
+// ── InsightChip — commentaire Claude court ────────────────────────────────────
+
+const BIAS_STYLE = {
+  bullish: { color: 'var(--call)',      bg: 'rgba(0,200,150,.07)',   border: 'rgba(0,200,150,.22)',  left: 'var(--call)'    },
+  bearish: { color: 'var(--put)',       bg: 'rgba(240,71,107,.07)',  border: 'rgba(240,71,107,.22)', left: 'var(--put)'     },
+  neutral: { color: 'var(--text-muted)', bg: 'rgba(255,255,255,.03)', border: 'rgba(255,255,255,.1)', left: 'var(--border-bright)' },
+}
+
+function InsightChip({ text, bias = 'neutral', loading = false, style }) {
+  const s = BIAS_STYLE[bias] ?? BIAS_STYLE.neutral
+  if (loading) return (
+    <div style={{
+      height: 30, background: s.bg, border: `1px solid ${s.border}`,
+      borderLeft: `3px solid ${s.left}`, borderRadius: '0 8px 8px 0',
+      marginTop: 8, animation: 'shimmer 1.4s infinite',
+      backgroundSize: '200% 100%',
+      backgroundImage: 'linear-gradient(90deg, transparent 25%, rgba(255,255,255,.04) 50%, transparent 75%)',
+      ...style,
+    }} />
+  )
+  if (!text) return null
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '4px 0' }}>
-      <Skeleton width="60%" height={20} />
-      <Skeleton width="90%" />
-      <Skeleton width="80%" />
-      <div style={{ marginTop: 6 }}>
-        <Skeleton width="40%" height={11} style={{ marginBottom: 6 }} />
-        {[1, 2, 3].map(i => <Skeleton key={i} width={`${70 + i * 5}%`} height={13} style={{ marginBottom: 5 }} />)}
-      </div>
-      <Skeleton width="85%" height={13} />
-      <Skeleton width="75%" height={13} />
-      <Skeleton width="50%" height={34} style={{ borderRadius: 10, marginTop: 4 }} />
+    <div style={{
+      display: 'flex', alignItems: 'flex-start', gap: 7,
+      background: s.bg,
+      border: `1px solid ${s.border}`,
+      borderLeft: `3px solid ${s.left}`,
+      borderRadius: '0 8px 8px 0',
+      padding: '6px 10px',
+      marginTop: 8,
+      ...style,
+    }}>
+      <span style={{ fontSize: 9, color: s.color, fontFamily: 'var(--mono)', fontWeight: 700, marginTop: 1, flexShrink: 0, letterSpacing: '0.5px' }}>AI</span>
+      <span style={{ fontSize: 11, color: 'var(--text-dim)', lineHeight: 1.5, fontStyle: 'italic' }}>{text}</span>
     </div>
   )
+}
+
+// Hook — charge un insight via generateInsight
+function useInsight(metric, value, context, deps = []) {
+  const [insight, setInsight] = useState(null)
+  const [loadingI, setLoadingI] = useState(false)
+  useEffect(() => {
+    if (value == null) { setInsight(null); return }
+    setLoadingI(true)
+    generateInsight({ metric, value, context })
+      .then(r => { setInsight(r); setLoadingI(false) })
+      .catch(() => setLoadingI(false))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metric, value, ...deps])
+  return { insight, loadingI }
 }
 
 // Bouton copie rapide
@@ -170,45 +199,8 @@ export default function SignalsPage({ asset }) {
   const [lastUpdate,  setLastUpdate]  = useState(null)
   const [history,     setHistory]     = useState([])
 
-  // Novice layer
-  const [selectedTone,    setSelectedTone]    = useState(() => localStorage.getItem(LS_TONE_KEY) ?? DEFAULT_TONE)
-  const [noviceContent,   setNoviceContent]   = useState(null)
-  const [isGenerating,    setIsGenerating]    = useState(false)
-  const [generationError, setGenerationError] = useState(null)
-
   // Positioning
   const [positioning, setPositioning] = useState(null)
-
-  // UI
-  const [mode, setMode] = useState('expert')
-
-  // Publication Twitter
-  const [publishTrigger,    setPublishTrigger]    = useState(null)
-  const [tweets,            setTweets]            = useState(null)
-  const [isGeneratingThread, setIsGeneratingThread] = useState(false)
-
-  // Refs pour éviter les stale closures
-  const noviceDataRef    = useRef(null)
-  const selectedToneRef  = useRef(selectedTone)
-  useEffect(() => { selectedToneRef.current = selectedTone }, [selectedTone])
-
-  // ── Génération couche novice ──────────────────────────────────────────────
-
-  const generateNovice = useCallback(async (noviceData, toneId) => {
-    if (!noviceData) return
-    setIsGenerating(true)
-    setGenerationError(null)
-    try {
-      const content = await generateNoviceContent(noviceData, toneId)
-      setNoviceContent(content)
-      if (content.is_fallback) {
-        setGenerationError('Version simplifiée (analyse IA indisponible)')
-      }
-    } catch {
-      setGenerationError('Génération indisponible')
-    }
-    setIsGenerating(false)
-  }, [])
 
   // ── Chargement du signal ──────────────────────────────────────────────────
 
@@ -268,86 +260,18 @@ export default function SignalsPage({ asset }) {
       const interp = interpretSignal(sig, raw)
       setInterpreted(interp)
 
-      // Stocker noviceData dans le ref pour éviter les stale closures
-      noviceDataRef.current = interp?.noviceData ?? null
-
       if (sig?.global != null) {
         setHistory(prev => [...prev.slice(-19), { score: sig.global, ts: Date.now() }])
       }
 
       setLastUpdate(new Date())
-
-      // Générer la couche novice automatiquement
-      if (interp?.noviceData) {
-        generateNovice(interp.noviceData, selectedToneRef.current)
-      }
-
-      // Détecter un trigger de publication Twitter
-      const trigger = detectTrigger(sig, interp, raw, asset)
-      if (trigger && !publishTrigger) {
-        setPublishTrigger(trigger)
-        setTweets(null)
-        setIsGeneratingThread(true)
-        generateTwitterThread(trigger, trigger.marketContext)
-          .then(t => { setTweets(t); setIsGeneratingThread(false) })
-          .catch(() => setIsGeneratingThread(false))
-      }
     } catch (e) {
       setError(e.message)
     }
     setLoading(false)
-  }, [asset, generateNovice])
-
-  // ── Changement de ton ─────────────────────────────────────────────────────
-
-  const handleToneChange = useCallback((toneId) => {
-    setSelectedTone(toneId)
-    selectedToneRef.current = toneId
-    localStorage.setItem(LS_TONE_KEY, toneId)
-    const nd = noviceDataRef.current
-    if (nd) generateNovice(nd, toneId)
-  }, [generateNovice])
-
-  // ── Regénération (correction bug stale closure) ───────────────────────────
-
-  const regenerate = useCallback(() => {
-    const nd = noviceDataRef.current
-    if (nd) generateNovice(nd, selectedToneRef.current)
-  }, [generateNovice])
-
-  // ── Regénération thread Twitter ───────────────────────────────────────────
-
-  const regenerateThread = useCallback(() => {
-    if (!publishTrigger) return
-    setTweets(null)
-    setIsGeneratingThread(true)
-    generateTwitterThread(publishTrigger, publishTrigger.marketContext)
-      .then(t => { setTweets(t); setIsGeneratingThread(false) })
-      .catch(() => setIsGeneratingThread(false))
-  }, [publishTrigger])
-
-  const dismissPanel = useCallback(() => {
-    if (publishTrigger?.hash) markAsPublished(publishTrigger.hash)
-    setPublishTrigger(null)
-    setTweets(null)
-  }, [publishTrigger])
+  }, [asset])
 
   useEffect(() => { load() }, [asset])
-
-  // Détecter un trigger settlement au montage et à chaque changement d'asset
-  useEffect(() => {
-    let active = true
-    detectSettlementTrigger(asset).then(trigger => {
-      if (!active || !trigger) return
-      setPublishTrigger(trigger)
-      setTweets(null)
-      setIsGeneratingThread(true)
-      generateTwitterThread(trigger, trigger.marketContext)
-        .then(t => { if (active) { setTweets(t); setIsGeneratingThread(false) } })
-        .catch(() => { if (active) setIsGeneratingThread(false) })
-    }).catch(() => {})
-    return () => { active = false }
-  }, [asset])
 
   // ── Variables UI ──────────────────────────────────────────────────────────
 
@@ -357,6 +281,11 @@ export default function SignalsPage({ asset }) {
   const expert  = interpreted?.expert
   const recos   = expert?.recommendations
   const gColor  = scoreColor(global)
+
+  // Insights Claude
+  const { insight: insightScore,   loadingI: loadingScore }   = useInsight('global_score', global,                     { asset }, [asset, global])
+  const { insight: insightFunding, loadingI: loadingFunding } = useInsight('funding',       rawData?.funding?.rateAnn, { asset }, [asset, rawData?.funding?.rateAnn])
+  const { insight: insightIV,      loadingI: loadingIV }      = useInsight('iv_rank',       scores?.s1,                { asset }, [asset, scores?.s1])
 
   // Texte pour copie synthesis
   const getSynthesisText = () => {
@@ -443,6 +372,7 @@ export default function SignalsPage({ asset }) {
               {signal?.label}
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{signal?.action}</div>
+            <InsightChip text={insightScore?.text} bias={insightScore?.bias} loading={loadingScore} style={{ marginTop: 12, textAlign: 'left' }} />
           </>
         ) : (
           <div style={{ padding: '20px 0', color: 'var(--text-muted)', fontSize: 13 }}>
@@ -451,36 +381,8 @@ export default function SignalsPage({ asset }) {
         )}
       </div>
 
-      {/* ── Toggle Expert / Novice ── */}
+      {/* ══════════════════ ANALYSE EXPERT ══════════════════ */}
       {global != null && (
-        <div style={{
-          display: 'flex', gap: 0, marginBottom: 14,
-          background: 'rgba(255,255,255,.04)', borderRadius: 12, padding: 3,
-        }}>
-          {[
-            { id: 'expert', label: '⚡ Expert' },
-            { id: 'novice', label: '👤 Simple' },
-          ].map(({ id, label }) => (
-            <button
-              key={id}
-              onClick={() => setMode(id)}
-              style={{
-                flex: 1, padding: '8px 0', border: 'none', borderRadius: 10,
-                fontFamily: 'var(--sans)', fontWeight: 700, fontSize: 13,
-                cursor: 'pointer',
-                background: mode === id ? 'var(--accent)' : 'transparent',
-                color: mode === id ? 'var(--bg)' : 'var(--text-muted)',
-                transition: 'background .18s, color .18s',
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* ══════════════════ MODE EXPERT ══════════════════ */}
-      {mode === 'expert' && (
         <>
           {/* Score breakdown */}
           {scores && (
@@ -495,7 +397,9 @@ export default function SignalsPage({ asset }) {
                 Décomposition du score
               </div>
               <ScoreBar label="Volatilité IV — 30%"        score={scores.s1} color={scoreColor(scores.s1)} />
+              <InsightChip text={insightIV?.text} bias={insightIV?.bias} loading={loadingIV} style={{ marginBottom: 10 }} />
               <ScoreBar label="Funding Rate — 20%"         score={scores.s2} color={scoreColor(scores.s2)} />
+              <InsightChip text={insightFunding?.text} bias={insightFunding?.bias} loading={loadingFunding} style={{ marginBottom: 10 }} />
               <ScoreBar label="Basis Futures — 20%"        score={scores.s3} color={scoreColor(scores.s3)} />
               <ScoreBar label="Prime IV/RV — 15%"          score={scores.s4} color={scoreColor(scores.s4)} />
               <ScoreBar label={`On-Chain — ${scores.s6 != null ? '10' : '15'}%`} score={scores.s5} color={scoreColor(scores.s5)} />
@@ -738,180 +642,10 @@ export default function SignalsPage({ asset }) {
         </>
       )}
 
-      {/* ══════════════════ MODE NOVICE ══════════════════ */}
-      {mode === 'novice' && global != null && (
-        <>
-          {/* Sélecteur de ton */}
-          <div style={{
-            background: 'var(--surface)', border: '1px solid var(--border)',
-            borderRadius: 12, padding: '14px 16px', marginBottom: 14,
-          }}>
-            <ToneSelector
-              selectedTone={selectedTone}
-              onToneChange={handleToneChange}
-              isGenerating={isGenerating}
-            />
-          </div>
-
-          {/* Contenu novice */}
-          <div style={{
-            background: 'var(--surface)', border: '1px solid var(--border)',
-            borderRadius: 12, padding: '16px', marginBottom: 14, position: 'relative',
-          }}>
-            {isGenerating ? (
-              <NoviceSkeleton />
-            ) : noviceContent ? (
-              <>
-                {/* Bouton copie */}
-                <div style={{ position: 'absolute', top: 12, right: 12 }}>
-                  <CopyButton getText={() => {
-                    const c = noviceContent
-                    return [
-                      `${c.emoji} ${c.headline}`,
-                      '',
-                      c.metaphor,
-                      '',
-                      c.situation,
-                      '',
-                      (c.steps ?? []).map((s, i) => `${i + 1}. ${s}`).join('\n'),
-                      '',
-                      `💰 ${c.gain}`,
-                      `⚠️ ${c.risk}`,
-                      '',
-                      `→ ${c.action}`,
-                    ].join('\n')
-                  }} />
-                </div>
-
-                {/* Headline */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, paddingRight: 36 }}>
-                  <span style={{ fontSize: 26, lineHeight: 1 }}>{noviceContent.emoji}</span>
-                  <div style={{ fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 16, color: 'var(--text)', lineHeight: 1.2 }}>
-                    {noviceContent.headline}
-                  </div>
-                </div>
-
-                {/* Métaphore */}
-                <div style={{
-                  fontSize: 13, color: 'var(--text-dim)', fontStyle: 'italic',
-                  lineHeight: 1.6, marginBottom: 14, paddingLeft: 12,
-                  borderLeft: '2px solid var(--border-bright)',
-                }}>
-                  {noviceContent.metaphor}
-                </div>
-
-                {/* Situation */}
-                <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6, marginBottom: 14 }}>
-                  {noviceContent.situation}
-                </div>
-
-                {/* Étapes */}
-                <div style={{ marginBottom: 14 }}>
-                  <div style={{
-                    fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--sans)',
-                    fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 8,
-                  }}>
-                    Opportunités
-                  </div>
-                  {(noviceContent.steps ?? []).map((step, i) => (
-                    <div key={i} style={{ display: 'flex', gap: 10, marginBottom: 6, alignItems: 'flex-start' }}>
-                      <div style={{
-                        width: 20, height: 20, borderRadius: 6, background: 'rgba(0,212,255,.12)',
-                        color: 'var(--accent)', fontFamily: 'var(--sans)', fontWeight: 800,
-                        fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                      }}>
-                        {i + 1}
-                      </div>
-                      <span style={{ fontSize: 13, color: 'var(--text-dim)', lineHeight: 1.5 }}>{step}</span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Gain + Risque */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
-                  <div style={{
-                    background: 'rgba(0,229,160,.06)', border: '1px solid rgba(0,229,160,.2)',
-                    borderRadius: 10, padding: '10px 12px',
-                  }}>
-                    <div style={{ fontSize: 10, color: 'var(--call)', fontFamily: 'var(--sans)', fontWeight: 700, marginBottom: 4 }}>
-                      💰 Potentiel
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.5 }}>
-                      {noviceContent.gain}
-                    </div>
-                  </div>
-                  <div style={{
-                    background: 'rgba(255,107,53,.06)', border: '1px solid rgba(255,107,53,.2)',
-                    borderRadius: 10, padding: '10px 12px',
-                  }}>
-                    <div style={{ fontSize: 10, color: 'var(--accent2)', fontFamily: 'var(--sans)', fontWeight: 700, marginBottom: 4 }}>
-                      ⚠️ Risque
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.5 }}>
-                      {noviceContent.risk}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Appel à l'action */}
-                <div style={{
-                  background: 'rgba(0,212,255,.07)', border: '1px solid rgba(0,212,255,.25)',
-                  borderRadius: 10, padding: '12px 14px', marginBottom: 14,
-                  fontSize: 13, color: 'var(--accent)', lineHeight: 1.6, fontFamily: 'var(--sans)', fontWeight: 600,
-                }}>
-                  {noviceContent.action} →
-                </div>
-
-                {/* Message fallback discret */}
-                {noviceContent.is_fallback && generationError && (
-                  <div style={{ textAlign: 'center', fontSize: 10, color: 'var(--text-muted)', opacity: .5 }}>
-                    {generationError}
-                  </div>
-                )}
-
-                {/* Bouton Regénérer */}
-                <button
-                  onClick={regenerate}
-                  disabled={isGenerating}
-                  style={{
-                    width: '100%', padding: '10px 0', border: '1px solid var(--border)',
-                    borderRadius: 10, background: 'none', cursor: 'pointer',
-                    fontFamily: 'var(--sans)', fontWeight: 700, fontSize: 12,
-                    color: 'var(--text-muted)', display: 'flex', alignItems: 'center',
-                    justifyContent: 'center', gap: 6,
-                  }}
-                >
-                  <span style={{
-                    display: 'inline-block',
-                    animation: isGenerating ? 'spin .7s linear infinite' : 'none',
-                  }}>🔄</span>
-                  Regénérer (nouvelle métaphore)
-                </button>
-              </>
-            ) : (
-              <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, padding: '20px 0' }}>
-                {generationError ?? 'Chargement de l\'analyse...'}
-              </div>
-            )}
-          </div>
-        </>
-      )}
-
       {lastUpdate && (
         <div style={{ textAlign: 'center', fontSize: 10, color: 'var(--text-muted)', opacity: .5, marginTop: 4, marginBottom: 8 }}>
           Mis à jour {lastUpdate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </div>
-      )}
-
-      {/* Panel publication Twitter */}
-      {publishTrigger && (
-        <PublishPanel
-          trigger={publishTrigger}
-          tweets={tweets}
-          isGenerating={isGeneratingThread}
-          onRegenerate={regenerateThread}
-          onDismiss={dismissPanel}
-        />
       )}
     </div>
   )
