@@ -8,9 +8,9 @@ options, futures, funding, IV, Greeks, signaux — données en temps réel depui
 | Onglet | Contenu |
 |---|---|
 | **Market** | Prix spot 3 exchanges (Deribit index, Binance, Coinbase), VWAP pondéré volume, spread cross-exchange |
-| **Dérivés** | Funding perpétuel (Deribit · Binance), term structure futures + basis annualisé, Open Interest, sentiment Long/Short (Binance), liquidations, countdown prochain fixing funding |
+| **Dérivés** | Funding perpétuel (Deribit · Binance), term structure futures + basis annualisé, Open Interest restructuré en 3 sous-sections (Deribit Options · Binance Perps · Signal Combiné), sentiment Long/Short (Binance), liquidations, countdown prochain fixing funding |
 | **Options** | DVOL + IV Rank Deribit, structure à terme ATM IV, Greeks ATM (Black-Scholes), IV spread Deribit / Binance, OI, prix de règlement, onglet Signaux avec couche Expert/Simple (Claude API) |
-| **Signaux** | Score composite global (IV · Funding · Basis · IV/RV · On-Chain), 3 blocs recommandations indépendants (Spot / Futures / Options), couche Expert et Simple (6 tons paramétrables, génération Claude API) |
+| **Signaux** | Score composite global (IV · Funding · Basis · IV/RV · On-Chain · Positionnement), tableau positionnement croisé Retail/Institutionnels (mode Expert), 3 blocs recommandations indépendants (Spot / Futures / Options), couche Expert et Simple (6 tons paramétrables, génération Claude API) |
 | **Trade** | *(en développement)* |
 | **On-Chain** | Score on-chain composite, Mempool, Exchange Flows, Mining — couche Expert/Simple |
 | **Audit** | Journal de hashage unifié (Signaux · Anomalies · Patterns · Cache), Vue générale avec stats et description des sources. Accessible via l'icône ⚙ dans le header. |
@@ -45,8 +45,9 @@ src/
 │   ├── history/
 │   │   └── metric_history.js       ← Historique snapshots options
 │   └── signals/
-│       ├── signal_engine.js        ← Score composite (IV 30% · Funding 20% · Basis 20% · IV/RV 15% · On-Chain 15%)
-│       ├── signal_interpreter.js   ← 3 blocs recommandations : Spot / Futures / Options
+│       ├── signal_engine.js        ← Score composite (IV 30% · Funding 20% · Basis 20% · IV/RV 15% · On-Chain 10-15% · Positionnement 15%)
+│       ├── signal_interpreter.js   ← 3 blocs recommandations : Spot / Futures / Options (+ contexte positionnement)
+│       ├── positioning_score.js    ← Score s6 : divergence Retail (Binance L/S) vs Institutionnels (Deribit P/C)
 │       ├── market_fingerprint.js   ← Fingerprint marché IndexedDB (pattern matching)
 │       ├── onchain_signals.js      ← Signaux on-chain : Exchange flows, Mempool, Mining
 │       ├── tone_config.js          ← 6 tons paramétrables (humor, formal, serious, pedagogical, motivational, storytelling)
@@ -84,7 +85,26 @@ src/
 | Funding Rate annualisé | 20% | Deribit perp |
 | Basis Futures (contango/backwardation) | 20% | Deribit futures datés |
 | Prime IV/RV | 15% | DVOL vs Realized Vol |
-| On-Chain | 15% | blockchain.info · mempool.space · Glassnode |
+| On-Chain | 10% (15% si s6 absent) | blockchain.info · mempool.space · Glassnode |
+| **Positionnement (s6)** | **15%** (optionnel) | Binance Long/Short · Deribit Put/Call OI |
+
+> **Rétrocompatibilité :** si les données Binance L/S ou Deribit OI sont indisponibles, s6 = null et le poids de l'On-Chain remonte à 15% — le comportement est identique à l'ancienne version.
+
+### Positionnement croisé Retail vs Institutionnels
+
+Le module `positioning_score.js` calcule la divergence entre :
+- **Retail** — Long/Short ratio Binance (`lsRatio`) : > 1.2 = retail long, < 0.8 = retail short
+- **Institutionnels** — Put/Call ratio Deribit (`pcRatio`) : < 0.85 = offensif (calls), > 1.15 = défensif (puts)
+
+| Situation | Type | Signal |
+|---|---|---|
+| Retail long + Instit défensif | Divergence contrarian | Baissier |
+| Retail short + Instit offensif | Divergence contrarian | Haussier |
+| Retail long + Instit offensif | Consensus | Haussier (momentum) |
+| Retail short + Instit défensif | Consensus | Baissier (momentum) |
+
+Affiché dans **SignalsPage** (mode Expert) sous forme de tableau avec ratios, badges colorés et action recommandée.
+Affiché dans **DerivativesPage** sous le bloc Open Interest (3 sous-sections + Signal Combiné coloré).
 
 ### Interprétation 3 marchés
 
@@ -93,7 +113,7 @@ Pour chaque niveau de score, 3 recommandations indépendantes :
 | Marché | Indicateurs clés |
 |---|---|
 | **Spot** | IV Rank, zones de support |
-| **Futures/Perp** | Funding rate, cash-and-carry |
+| **Futures/Perp** | Funding rate, cash-and-carry, contexte positionnement croisé si divergence |
 | **Options** | IV Rank, straddle/strangle, strikes ATM ±8% |
 
 ### Couche Simple (Claude API)
@@ -179,6 +199,7 @@ Dans **Settings → Pages → Source → GitHub Actions**.
 | **Binance Spot** | `/api/v3/ticker/24hr` | Prix spot USDT |
 | **Binance Futures** | `/fapi/v1/*`, `/futures/data/*` | Perp, funding, OI, sentiment, liquidations |
 | **Binance Options** | `/eapi/v1/mark` | Mark IV options européennes |
+| **Binance Futures** | `/futures/data/globalLongShortAccountRatio` | Long/Short ratio (s6) |
 | **Coinbase Exchange** | `/products/{id}/ticker` | Spot fiat USD |
 | **blockchain.info** | `/stats` | Stats réseau Bitcoin |
 | **mempool.space** | `/api/mempool`, `/api/v1/fees/recommended` | Mempool, frais |
