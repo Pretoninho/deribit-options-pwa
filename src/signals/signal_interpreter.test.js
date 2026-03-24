@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { interpretSignal } from './signal_interpreter.js'
+import { interpretSignal, strategyEngine } from './signal_interpreter.js'
 
 // Helper : construit un dvol tel que ivRank = valeur voulue (0-100)
 const dvolForRank = (rank) => ({
@@ -173,6 +173,136 @@ describe('_optionsReco — contexte enrichi funding / basis / rv', () => {
     )
     expect(result.expert.recommendations.options.action).toContain('Max Pain')
     expect(result.expert.recommendations.options.action).toContain('48')
+  })
+})
+
+// ── strategyEngine ───────────────────────────────────────────────────────────
+
+describe('strategyEngine — détection des stratégies', () => {
+  it('retourne un tableau vide si aucune condition déclenchée', () => {
+    expect(strategyEngine({ ivRank: 50, funding: 7, basisAvg: 3, spot: 50000, maxPain: null })).toEqual([])
+  })
+
+  it('VOL_EXPANSION : ivRank < 30 → déclenché', () => {
+    const result = strategyEngine({ ivRank: 20, funding: 0, basisAvg: 3, spot: null, maxPain: null })
+    expect(result.some(s => s.type === 'VOL_EXPANSION')).toBe(true)
+  })
+
+  it('VOL_EXPANSION : ivRank = 30 → non déclenché (limite stricte)', () => {
+    const result = strategyEngine({ ivRank: 30, funding: 0, basisAvg: 3, spot: null, maxPain: null })
+    expect(result.some(s => s.type === 'VOL_EXPANSION')).toBe(false)
+  })
+
+  it('FUNDING_REVERSAL : funding > 15 → déclenché avec strength high', () => {
+    const result = strategyEngine({ ivRank: 50, funding: 20, basisAvg: 3, spot: null, maxPain: null })
+    const s = result.find(s => s.type === 'FUNDING_REVERSAL')
+    expect(s).toBeDefined()
+    expect(s.strength).toBe('high')
+  })
+
+  it('FUNDING_REVERSAL : funding < -10 → déclenché', () => {
+    const result = strategyEngine({ ivRank: 50, funding: -15, basisAvg: 3, spot: null, maxPain: null })
+    expect(result.some(s => s.type === 'FUNDING_REVERSAL')).toBe(true)
+  })
+
+  it('FUNDING_REVERSAL : funding = 10 → non déclenché', () => {
+    const result = strategyEngine({ ivRank: 50, funding: 10, basisAvg: 3, spot: null, maxPain: null })
+    expect(result.some(s => s.type === 'FUNDING_REVERSAL')).toBe(false)
+  })
+
+  it('MAX_PAIN_PLAY : spot dans les 2% du maxPain → déclenché', () => {
+    const result = strategyEngine({ ivRank: 50, funding: 0, basisAvg: 3, spot: 49100, maxPain: { maxPainStrike: 50000 } })
+    expect(result.some(s => s.type === 'MAX_PAIN_PLAY')).toBe(true)
+  })
+
+  it('MAX_PAIN_PLAY : spot à plus de 2% du maxPain → non déclenché', () => {
+    const result = strategyEngine({ ivRank: 50, funding: 0, basisAvg: 3, spot: 47000, maxPain: { maxPainStrike: 50000 } })
+    expect(result.some(s => s.type === 'MAX_PAIN_PLAY')).toBe(false)
+  })
+
+  it('MAX_PAIN_PLAY : maxPain null → non déclenché', () => {
+    const result = strategyEngine({ ivRank: 50, funding: 0, basisAvg: 3, spot: 50000, maxPain: null })
+    expect(result.some(s => s.type === 'MAX_PAIN_PLAY')).toBe(false)
+  })
+
+  it('VOL_CARRY : ivRank > 70 → déclenché', () => {
+    const result = strategyEngine({ ivRank: 80, funding: 0, basisAvg: 3, spot: null, maxPain: null })
+    expect(result.some(s => s.type === 'VOL_CARRY')).toBe(true)
+  })
+
+  it('VOL_CARRY : ivRank = 70 → non déclenché (limite stricte)', () => {
+    const result = strategyEngine({ ivRank: 70, funding: 0, basisAvg: 3, spot: null, maxPain: null })
+    expect(result.some(s => s.type === 'VOL_CARRY')).toBe(false)
+  })
+
+  it('CASH_AND_CARRY : basisAvg > 8 → déclenché avec strength high', () => {
+    const result = strategyEngine({ ivRank: 50, funding: 0, basisAvg: 10, spot: null, maxPain: null })
+    const s = result.find(s => s.type === 'CASH_AND_CARRY')
+    expect(s).toBeDefined()
+    expect(s.strength).toBe('high')
+  })
+
+  it('CASH_AND_CARRY : basisAvg = 8 → non déclenché', () => {
+    const result = strategyEngine({ ivRank: 50, funding: 0, basisAvg: 8, spot: null, maxPain: null })
+    expect(result.some(s => s.type === 'CASH_AND_CARRY')).toBe(false)
+  })
+
+  it('REGIME_SHIFT : ivRank entre 40-60 et funding proche de zéro → déclenché', () => {
+    const result = strategyEngine({ ivRank: 50, funding: 3, basisAvg: 3, spot: null, maxPain: null })
+    expect(result.some(s => s.type === 'REGIME_SHIFT')).toBe(true)
+  })
+
+  it('REGIME_SHIFT : ivRank hors 40-60 → non déclenché', () => {
+    const result = strategyEngine({ ivRank: 35, funding: 0, basisAvg: 3, spot: null, maxPain: null })
+    expect(result.some(s => s.type === 'REGIME_SHIFT')).toBe(false)
+  })
+
+  it('chaque signal contient type, strength et context', () => {
+    const result = strategyEngine({ ivRank: 20, funding: 20, basisAvg: 10, spot: null, maxPain: null })
+    for (const s of result) {
+      expect(s).toHaveProperty('type')
+      expect(s).toHaveProperty('strength')
+      expect(s).toHaveProperty('context')
+      expect(['low', 'medium', 'high']).toContain(s.strength)
+    }
+  })
+})
+
+// ── intégration strategyEngine dans interpretSignal ──────────────────────────
+
+describe('interpretSignal — intégration dynamicStrategies dans options.action', () => {
+  it('action options enrichie avec les stratégies actives', () => {
+    const result = interpretSignal(
+      { global: 50 },
+      { dvol: dvolForRank(20), funding: { rateAnn: 20 }, basisAvg: 10, spot: null },
+    )
+    const action = result.expert.recommendations.options.action
+    expect(action).toContain('Stratégies actives:')
+    expect(action).toContain('VOL_EXPANSION')
+    expect(action).toContain('FUNDING_REVERSAL')
+    expect(action).toContain('CASH_AND_CARRY')
+  })
+
+  it('action options non modifiée si aucune stratégie active', () => {
+    const result = interpretSignal(
+      { global: 50 },
+      { dvol: dvolForRank(50), funding: { rateAnn: 7 }, basisAvg: 3, spot: null },
+    )
+    const action = result.expert.recommendations.options.action
+    expect(action).not.toContain('Stratégies actives:')
+  })
+
+  it('structure expert.recommendations.options inchangée après enrichissement', () => {
+    const result = interpretSignal(
+      { global: 50 },
+      { dvol: dvolForRank(20), funding: { rateAnn: 20 }, basisAvg: 10, spot: null },
+    )
+    const opts = result.expert.recommendations.options
+    expect(opts).toHaveProperty('signal')
+    expect(opts).toHaveProperty('action')
+    expect(opts).toHaveProperty('timeframe')
+    expect(opts).toHaveProperty('stopLoss')
+    expect(opts).toHaveProperty('maxPain')
   })
 })
 
