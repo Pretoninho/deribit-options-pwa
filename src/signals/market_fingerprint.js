@@ -9,11 +9,16 @@
  *
  * Persistance : IndexedDB via idb-keyval
  *   clé : 'mf_' + fingerprint_hash
- *   valeur : { config, outcomes: [{ price, ts }], count }
+ *   valeur : { config, outcomes: [{ price, ts }], count, patternStats }
  */
 
 import { get as idbGet, set as idbSet } from 'idb-keyval'
 import { fnv1a } from '../data/data_store/cache.js'
+
+// ── Multi-timeframe configuration ────────────────────────────────────────────
+
+/** Supported tracking timeframes. */
+export const TIMEFRAMES = ['1h', '24h', '7d']
 
 // ── Bucketing ─────────────────────────────────────────────────────────────────
 
@@ -63,6 +68,95 @@ function basisBucket(basisPct) {
   if (basisPct >= 2)  return 'contango'
   if (basisPct >= -2) return 'flat'
   return 'backwardation'
+}
+
+// ── Move classification ───────────────────────────────────────────────────────
+
+/**
+ * Classifie un mouvement de prix en % dans l'une des 5 catégories.
+ *
+ * Seuils (en %) :
+ *   bigDown  : move < -3
+ *   down     : -3 ≤ move < -0.1
+ *   flat     : -0.1 ≤ move ≤ 0.1
+ *   up       :  0.1 < move ≤ 3
+ *   bigUp    : move > 3
+ *
+ * @param {number} move — variation en %
+ * @returns {'bigDown'|'down'|'flat'|'up'|'bigUp'}
+ */
+export function classifyMove(move) {
+  if (move < -3)   return 'bigDown'
+  if (move < -0.1) return 'down'
+  if (move <= 0.1) return 'flat'
+  if (move <= 3)   return 'up'
+  return 'bigUp'
+}
+
+// ── Per-timeframe stat helpers ────────────────────────────────────────────────
+
+/**
+ * Retourne une structure de statistiques vide pour un timeframe.
+ * @returns {{ occurrences: number, upMoves: number, downMoves: number, flatMoves: number, avgUpMove: number, avgDownMove: number, distribution: Object }}
+ */
+function emptyTimeframeStat() {
+  return {
+    occurrences: 0,
+    upMoves:     0,
+    downMoves:   0,
+    flatMoves:   0,
+    avgUpMove:   0,
+    avgDownMove: 0,
+    distribution: { bigDown: 0, down: 0, flat: 0, up: 0, bigUp: 0 },
+  }
+}
+
+/**
+ * Intègre un mouvement dans une statistique de timeframe (mise à jour in-place).
+ * Met à jour les compteurs directionnels, les moyennes courantes et la distribution.
+ *
+ * @param {{ occurrences: number, upMoves: number, downMoves: number, flatMoves: number, avgUpMove: number, avgDownMove: number, distribution: Object }} stat
+ * @param {number} move — variation en %
+ */
+function _applyMove(stat, move) {
+  stat.occurrences += 1
+  stat.distribution[classifyMove(move)] += 1
+
+  if (move > 0.1) {
+    stat.upMoves += 1
+    stat.avgUpMove = ((stat.avgUpMove * (stat.upMoves - 1)) + move) / stat.upMoves
+  } else if (move < -0.1) {
+    stat.downMoves += 1
+    stat.avgDownMove = ((stat.avgDownMove * (stat.downMoves - 1)) + move) / stat.downMoves
+  } else {
+    stat.flatMoves += 1
+  }
+}
+
+/**
+ * Calcule les métriques avancées (probabilités, espérance, risk/reward)
+ * à partir d'une statistique de timeframe.
+ *
+ * @param {{ occurrences: number, upMoves: number, downMoves: number, avgUpMove: number, avgDownMove: number, distribution: Object }} stat
+ * @returns {{ probUp: number, probDown: number, expectedValue: number, riskReward: number|null, distribution: Object }|null}
+ */
+export function computeAdvancedStats(stat) {
+  if (!stat || !stat.occurrences) return null
+
+  const probUp   = stat.upMoves   / stat.occurrences
+  const probDown = stat.downMoves / stat.occurrences
+  const expectedValue = (probUp * stat.avgUpMove) + (probDown * stat.avgDownMove)
+  const riskReward = stat.avgDownMove !== 0
+    ? Math.abs(stat.avgUpMove / stat.avgDownMove)
+    : null
+
+  return {
+    probUp:        Math.round(probUp   * 1000) / 1000,
+    probDown:      Math.round(probDown * 1000) / 1000,
+    expectedValue: Math.round(expectedValue * 100) / 100,
+    riskReward:    riskReward != null ? Math.round(riskReward * 100) / 100 : null,
+    distribution:  stat.distribution,
+  }
 }
 
 // ── Fingerprint ───────────────────────────────────────────────────────────────
@@ -136,8 +230,9 @@ export async function recordPattern(fingerprint, spotPrice) {
 }
 
 /**
- * Enregistre le résultat prix à +1h, +4h, +24h après un snapshot.
+ * Enregistre le résultat prix à +1h, +4h, +24h, +7d après un snapshot.
  * À appeler périodiquement avec le prix actuel pour mettre à jour les outcomes.
+ * Met également à jour les statistiques multi-timeframes agrégées (patternStats).
  *
  * Principe : comparer le prix actuel à celui du snapshot enregistré
  * et calculer le % de variation pour les outcomes passés.
@@ -151,18 +246,37 @@ export async function updateOutcomes(hash, currentPrice) {
   const record = await idbGet(key)
   if (!record) return
 
+  // Initialise patternStats si absent (migration des données existantes)
+  if (!record.patternStats) {
+    record.patternStats = {}
+    for (const tf of TIMEFRAMES) {
+      record.patternStats[tf] = emptyTimeframeStat()
+    }
+  }
+
   const now = Date.now()
-  const ONE_HOUR = 3_600_000
+  const ONE_HOUR  = 3_600_000
   const FOUR_HOURS = 4 * ONE_HOUR
-  const ONE_DAY = 24 * ONE_HOUR
+  const ONE_DAY   = 24 * ONE_HOUR
+  const ONE_WEEK  = 7 * ONE_DAY
 
   record.outcomes = record.outcomes.map(o => {
     const age = now - o.ts
     const ret = o.price > 0 ? ((currentPrice - o.price) / o.price) * 100 : null
 
-    if (!o.result_1h  && age >= ONE_HOUR   && age < ONE_HOUR  + 300_000) o.result_1h  = ret
+    if (!o.result_1h  && age >= ONE_HOUR   && age < ONE_HOUR   + 300_000) {
+      o.result_1h  = ret
+      if (ret != null) _applyMove(record.patternStats['1h'], ret)
+    }
     if (!o.result_4h  && age >= FOUR_HOURS && age < FOUR_HOURS + 300_000) o.result_4h  = ret
-    if (!o.result_24h && age >= ONE_DAY    && age < ONE_DAY   + 300_000) o.result_24h = ret
+    if (!o.result_24h && age >= ONE_DAY    && age < ONE_DAY    + 300_000) {
+      o.result_24h = ret
+      if (ret != null) _applyMove(record.patternStats['24h'], ret)
+    }
+    if (!o.result_7d  && age >= ONE_WEEK   && age < ONE_WEEK   + 300_000) {
+      o.result_7d  = ret
+      if (ret != null) _applyMove(record.patternStats['7d'], ret)
+    }
 
     return o
   })
@@ -181,7 +295,8 @@ export async function updateOutcomes(hash, currentPrice) {
  *   winRate_1h: number|null,    — % de fois où le prix a monté à 1h
  *   winRate_4h: number|null,
  *   avgMove_24h: number|null,   — variation moyenne % à 24h
- *   config: Object|null
+ *   config: Object|null,
+ *   patternStats: Object|null   — statistiques multi-timeframes agrégées
  * }>}
  */
 /**
@@ -228,5 +343,6 @@ export async function getPatternStats(hash) {
     winRate_4h:  winRate('result_4h'),
     avgMove_24h: avgMove('result_24h'),
     config: record.config,
+    patternStats: record.patternStats ?? null,
   }
 }
