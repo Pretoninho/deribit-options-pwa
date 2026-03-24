@@ -254,6 +254,51 @@ function _buildSituation(dvol, funding, rv, basisAvg) {
   return parts.length > 0 ? parts.join(' · ') : 'Données partielles disponibles'
 }
 
+// ── Strategy Engine ────────────────────────────────────────────────────────
+
+/**
+ * Détecte dynamiquement les stratégies actives selon les conditions de marché.
+ *
+ * @param {{ ivRank: number|null, funding: number|null, basisAvg: number|null, spot: number|null, maxPain: object|null }} params
+ * @returns {Array<{ type: string, strength: string, context: string }>}
+ */
+export function strategyEngine({ ivRank, funding, basisAvg, spot, maxPain }) {
+  const signals = []
+
+  // Retail strategies
+  if (ivRank != null && ivRank < 30) {
+    signals.push({ type: 'VOL_EXPANSION', strength: 'medium', context: 'IV Rank faible — expansion de volatilité probable' })
+  }
+
+  if (funding != null && (funding > 15 || funding < -10)) {
+    signals.push({ type: 'FUNDING_REVERSAL', strength: 'high', context: 'Funding extrême — retournement possible' })
+  }
+
+  const maxPainStrike = maxPain?.maxPainStrike ?? null
+  if (spot != null && maxPainStrike != null) {
+    const distPct = (Math.abs(spot - maxPainStrike) / maxPainStrike) * 100
+    if (distPct <= 2) {
+      signals.push({ type: 'MAX_PAIN_PLAY', strength: 'medium', context: 'Prix dans la zone Max Pain (±2%)' })
+    }
+  }
+
+  // Institutional strategies
+  if (ivRank != null && ivRank > 70) {
+    signals.push({ type: 'VOL_CARRY', strength: 'medium', context: 'IV Rank élevé — opportunité de vol carry' })
+  }
+
+  if (basisAvg != null && basisAvg > 8) {
+    signals.push({ type: 'CASH_AND_CARRY', strength: 'high', context: 'Contango fort — opportunité cash-and-carry' })
+  }
+
+  // REGIME_SHIFT : IV Rank en zone neutre (40-60) et funding proche de zéro (±5%) — transition de régime probable
+  if (ivRank != null && ivRank >= 40 && ivRank <= 60 && funding != null && Math.abs(funding) <= 5) {
+    signals.push({ type: 'REGIME_SHIFT', strength: 'low', context: 'IV Rank neutre et funding en transition — changement de régime possible' })
+  }
+
+  return signals
+}
+
 // ── Fonction principale ────────────────────────────────────────────────────
 
 /**
@@ -287,9 +332,16 @@ export function interpretSignal(computedSignal, rawData) {
   const fundingAnn = funding?.rateAnn ?? funding?.avgAnn7d ?? null
   const situation  = _buildSituation(dvol, funding, rv, basisAvg)
 
+  const dynamicStrategies = strategyEngine({ ivRank, funding: fundingAnn, basisAvg, spot, maxPain })
+
   const spotReco    = _spotReco(score, dvol)
   const futuresReco = _futuresReco(score, funding, basisAvg, positioning)
   const optionsReco = _optionsReco(score, dvol, rv, spot, maxPain, funding, basisAvg)
+
+  if (dynamicStrategies.length > 0) {
+    const strategyNames = dynamicStrategies.map(s => s.type).join(', ')
+    optionsReco.action = `${optionsReco.action} | Stratégies actives: ${strategyNames}`
+  }
 
   const expert = {
     label:    signalMeta?.label ?? '—',
