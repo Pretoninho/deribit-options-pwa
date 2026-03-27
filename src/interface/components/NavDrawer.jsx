@@ -142,6 +142,22 @@ function IconCalibration() {
   )
 }
 
+function IconFingerprint() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2C6.48 2 2 6.48 2 12"/>
+      <path d="M12 6c3.31 0 6 2.69 6 6"/>
+      <path d="M12 10c1.1 0 2 .9 2 2"/>
+      <path d="M12 14c-1.1 0-2-.9-2-2 0-1.1.9-2 2-2"/>
+      <path d="M6 12c0-3.31 2.69-6 6-6"/>
+      <path d="M12 18c-3.31 0-6-2.69-6-6"/>
+      <path d="M18 12c0 3.31-2.69 6-6 6"/>
+      <path d="M22 12c0 5.52-4.48 10-10 10"/>
+    </svg>
+  )
+}
+
 // ── Items de navigation ───────────────────────────────────────────────────────
 
 const NAV_ITEMS = [
@@ -156,6 +172,7 @@ const NAV_ITEMS = [
   { id: 'audit',         label: 'Audit',             sub: 'Journal · Anomalies · Hashes',  Icon: IconAudit          },
   { id: 'notifications', label: 'Notifications',     sub: 'Alertes push · Seuils',         Icon: IconNotifications  },
   { id: 'calibration',   label: 'Calibration',        sub: 'Signaux · Patterns · Seuils',   Icon: IconCalibration    },
+  { id: 'fingerprint',  label: 'Fingerprint Debug',   sub: 'Patterns · Stats · Monitoring', Icon: IconFingerprint    },
 ]
 
 // ── Composant ─────────────────────────────────────────────────────────────────
