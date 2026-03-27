@@ -12,6 +12,7 @@ import AuditPage      from './pages/AuditPage.jsx'
 import VolPage        from './pages/VolPage.jsx'
 import TrackerPage    from './pages/TrackerPage.jsx'
 import CalibrationPage from './pages/CalibrationPage.jsx'
+import FingerprintDebug from './pages/FingerprintDebug.jsx'
 import ClockStatus    from './components/ClockStatus.jsx'
 import AuditBanner    from './components/AuditBanner.jsx'
 import NavDrawer      from './components/NavDrawer.jsx'
@@ -49,6 +50,7 @@ const PAGE_NAMES = {
   audit:         'Audit',
   notifications: 'Notifications',
   calibration:   'Calibration',
+  fingerprint:   'Fingerprint Debug',
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -233,6 +235,7 @@ export default function App() {
         {tab === 'audit'         && <AuditPage />}
         {tab === 'notifications' && <NotificationSettingsPage />}
         {tab === 'calibration'   && <CalibrationPage />}
+        {tab === 'fingerprint'   && <FingerprintDebug />}
         <VersionBar version={version} forceUpdate={forceUpdate} />
       </div>
 
