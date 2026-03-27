@@ -166,3 +166,22 @@ export function computeFinalScore(signal, dvol) {
 
   return signal.ev * signal.winrate * dvolFactor
 }
+
+// ─────────────────────────────────────────────────────────────
+// 6. Pipeline — sélection + filtrage
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Sélectionne les meilleurs patterns pour un timeframe donné puis les filtre
+ * selon les seuils adaptatifs issus du DVOL courant.
+ * Point d'entrée principal du pipeline stratégie.
+ *
+ * @param {number} dvol                              — DVOL actuel
+ * @param {{ timeframe?: '1h'|'24h'|'7d', topN?: number }} [options]
+ * @returns {Promise<Array>}                         — patterns filtrés prêts à trader
+ */
+export async function selectAndFilter(dvol, options = {}) {
+  const best     = await selectBestPatterns(options)
+  const filtered = filterPatterns(best, dvol)
+  return filtered
+}

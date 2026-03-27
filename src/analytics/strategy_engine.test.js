@@ -6,6 +6,7 @@ import {
   computePositionSize,
   applyDrawdownControl,
   computeFinalScore,
+  selectAndFilter,
 } from './strategy_engine.js'
 
 // ── Mock idb-keyval (IndexedDB) ───────────────────────────────────────────────
@@ -248,5 +249,54 @@ describe('selectBestPatterns', () => {
     idbGet.mockResolvedValueOnce([])
     const result = await selectBestPatterns()
     expect(result).toHaveLength(0)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────
+// selectAndFilter
+// ─────────────────────────────────────────────────────────────
+
+describe('selectAndFilter', () => {
+  function makeMfRecord({ upMoves = 60, downMoves = 20, avgUpMove = 1.5, avgDownMove = -1 } = {}) {
+    return {
+      count: upMoves + downMoves,
+      outcomes: [],
+      config: {},
+      patternStats: {
+        '24h': {
+          occurrences: upMoves + downMoves,
+          upMoves,
+          downMoves,
+          flatMoves: 0,
+          avgUpMove,
+          avgDownMove,
+          distribution: { bigDown: 0, down: downMoves, flat: 0, up: upMoves, bigUp: 0 },
+        },
+      },
+    }
+  }
+
+  it('retourne un tableau vide si aucun pattern disponible', async () => {
+    idbGet.mockResolvedValueOnce([])
+    const result = await selectAndFilter(55)
+    expect(result).toEqual([])
+  })
+
+  it('filtre les patterns selon le DVOL fourni', async () => {
+    idbGet
+      .mockResolvedValueOnce(['h1'])
+      .mockResolvedValueOnce(makeMfRecord())
+
+    const result = await selectAndFilter(55)
+    expect(Array.isArray(result)).toBe(true)
+  })
+
+  it('accepte les options timeframe et topN', async () => {
+    const hashes = ['a', 'b', 'c']
+    idbGet.mockResolvedValueOnce(hashes)
+    hashes.forEach(() => idbGet.mockResolvedValueOnce(makeMfRecord()))
+
+    const result = await selectAndFilter(55, { topN: 2 })
+    expect(result.length).toBeLessThanOrEqual(2)
   })
 })
