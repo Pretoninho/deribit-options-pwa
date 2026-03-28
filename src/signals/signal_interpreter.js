@@ -131,12 +131,41 @@ function _futuresReco(score, funding, basisAvg, positioning) {
 
 // ── Recommandation Options ────────────────────────────────────────────────
 
-function _optionsReco(score, dvol, rv, spot, maxPain) {
+function _optionsReco(score, dvol, rv, spot, maxPain, funding, basisAvg) {
   const ivRank = _ivRank(dvol)
   const strikeCall = spot != null ? Math.round(spot * OPTIONS_CALC.call_strike_otm_multiplier) : null
   const strikePut  = spot != null ? Math.round(spot * OPTIONS_CALC.put_strike_otm_multiplier) : null
   const ivStr = ivRank != null ? `IV Rank ${ivRank}%` : 'IV Rank N/A'
   const opt_cfg = INTERPRETER.options
+
+  // Contexte IV vs RV (vol implicite chère ou bon marché)
+  const rvCurrent = rv?.current ?? null
+  const ivVsRv = (dvol?.current != null && rvCurrent != null)
+    ? (dvol.current > rvCurrent
+        ? ' · IV > RV — vol implicite chère, privilégier la vente'
+        : ' · IV < RV — vol implicite bon marché, privilégier l\'achat')
+    : ''
+
+  // Contexte funding rate
+  const fundingAnn = funding?.rateAnn ?? funding?.avgAnn7d ?? null
+  const fundingCtx = fundingAnn != null
+    ? (fundingAnn >= 15
+        ? ` · funding élevé (${fmt(fundingAnn)}%/an) — surextension haussière, risque de retournement`
+        : fundingAnn >= 5
+        ? ` · funding modéré (${fmt(fundingAnn)}%/an) — biais haussier`
+        : fundingAnn <= -5
+        ? ` · funding négatif (${fmt(fundingAnn)}%/an) — pression baissière`
+        : ` · funding neutre (${fmt(fundingAnn)}%/an)`)
+    : ''
+
+  // Contexte basis (contango / backwardation)
+  const basisCtx = basisAvg != null
+    ? (basisAvg >= 8
+        ? ` · contango fort (basis ${fmt(basisAvg)}%/an) — prime futures élevée`
+        : basisAvg <= -2
+        ? ` · backwardation (basis ${fmt(basisAvg)}%/an) — stress ou demande de couverture`
+        : ` · basis modéré (${fmt(basisAvg)}%/an)`)
+    : ''
 
   // Suffix Max Pain si disponible
   const mpStr = maxPain?.interpretation
@@ -145,6 +174,9 @@ function _optionsReco(score, dvol, rv, spot, maxPain) {
     ? ` · Max Pain $${maxPain.maxPainStrike.toLocaleString()} (strike réel Deribit ✓)`
     : ''
 
+  // Contexte marché enrichi (IV/RV + funding + basis)
+  const ctxStr = `${ivVsRv}${fundingCtx}${basisCtx}`
+
   // Régime de volatilité
   const regime = _getVolRegime(ivRank)
 
@@ -152,7 +184,7 @@ function _optionsReco(score, dvol, rv, spot, maxPain) {
   if (regime === 'HIGH_VOL') {
     return {
       signal:    'Vendre la vol',
-      action:    `${ivStr} — volatilité historiquement élevée. Vendre un straddle/strangle (strikes ~${fmtPrice(strikeCall)} / ~${fmtPrice(strikePut)}) ou un Iron Condor sur Deribit. Durée 7-14j. Delta-hedger si le prix se déplace de > 5%.${mpStr}`,
+      action:    `${ivStr} — volatilité historiquement élevée${ctxStr}. Vendre un straddle/strangle (strikes ~${fmtPrice(strikeCall)} / ~${fmtPrice(strikePut)}) ou un Iron Condor sur Deribit. Durée 7-14j. Delta-hedger si le prix se déplace de > 5%.${mpStr}`,
       timeframe: '7 à 14 jours',
       stopLoss:  'Couper si IV Rank repasse sous 50% ou perte > 1× prime encaissée',
       maxPain,
@@ -162,38 +194,38 @@ function _optionsReco(score, dvol, rv, spot, maxPain) {
   if (regime === 'LOW_VOL') {
     return {
       signal:    'Acheter la vol',
-      action:    `${ivStr} bas — options bon marché en achat. Long puts ~${fmtPrice(strikePut)} comme protection ou long calls spéculatifs si le support tient. Durée 14-30j pour laisser le temps à la position.${mpStr}`,
+      action:    `${ivStr} bas${ctxStr} — options bon marché en achat. Long puts ~${fmtPrice(strikePut)} comme protection ou long calls spéculatifs si le support tient. Durée 14-30j pour laisser le temps à la position.${mpStr}`,
       timeframe: '14 à 30 jours',
       stopLoss:  'Limiter à la prime payée',
       maxPain,
     }
   }
 
-  // NEUTRAL → fallback basé sur score (ancienne logique)
+  // NEUTRAL → fallback basé sur score + contexte enrichi
   if (score >= opt_cfg.highVolScore) return {
     signal:    'Vendre la vol',
-    action:    `${ivStr} — volatilité historiquement élevée. Vendre un straddle/strangle (strikes ~${fmtPrice(strikeCall)} / ~${fmtPrice(strikePut)}) ou un Iron Condor sur Deribit. Durée 7-14j. Delta-hedger si le prix se déplace de > 5%.${mpStr}`,
+    action:    `${ivStr} — volatilité historiquement élevée${ctxStr}. Vendre un straddle/strangle (strikes ~${fmtPrice(strikeCall)} / ~${fmtPrice(strikePut)}) ou un Iron Condor sur Deribit. Durée 7-14j. Delta-hedger si le prix se déplace de > 5%.${mpStr}`,
     timeframe: '7 à 14 jours',
     stopLoss:  'Couper si IV Rank repasse sous 50% ou perte > 1× prime encaissée',
     maxPain,
   }
   if (score >= opt_cfg.spreadsScore) return {
     signal:    'Spreads vendeurs',
-    action:    `${ivStr} — bon contexte pour les spreads verticaux et covered calls. Strike call cible ~${fmtPrice(strikeCall)}. Durée 7j recommandée. Risque limité vs vente nue.${mpStr}`,
+    action:    `${ivStr}${ctxStr} — bon contexte pour les spreads verticaux et covered calls. Strike call cible ~${fmtPrice(strikeCall)}. Durée 7j recommandée. Risque limité vs vente nue.${mpStr}`,
     timeframe: '7 jours',
     stopLoss:  'Fermer à 50% du profit max ou si prix dépasse le strike court',
     maxPain,
   }
   if (score >= opt_cfg.selectiveScore) return {
     signal:    'Achats sélectifs',
-    action:    `${ivStr} neutre — éviter les ventes nues. Long calls ou puts si catalyseur identifié. Spreads débiteurs préférables pour limiter le coût. Strike put ~${fmtPrice(strikePut)}.${mpStr}`,
+    action:    `${ivStr} neutre${ctxStr} — éviter les ventes nues. Long calls ou puts si catalyseur identifié. Spreads débiteurs préférables pour limiter le coût. Strike put ~${fmtPrice(strikePut)}.${mpStr}`,
     timeframe: 'Sélectif selon catalyseur',
     stopLoss:  'Limiter à la prime payée (options achetées)',
     maxPain,
   }
   return {
     signal:    'Acheter la vol',
-    action:    `${ivStr} bas — options bon marché en achat. Long puts ~${fmtPrice(strikePut)} comme protection ou long calls spéculatifs si le support tient. Durée 14-30j pour laisser le temps à la position.${mpStr}`,
+    action:    `${ivStr} bas${ctxStr} — options bon marché en achat. Long puts ~${fmtPrice(strikePut)} comme protection ou long calls spéculatifs si le support tient. Durée 14-30j pour laisser le temps à la position.${mpStr}`,
     timeframe: '14 à 30 jours',
     stopLoss:  'Limiter à la prime payée',
     maxPain,
@@ -269,7 +301,7 @@ export function interpretSignal(computedSignal, rawData) {
 
   const spotReco    = _spotReco(score, dvol)
   const futuresReco = _futuresReco(score, funding, basisAvg, positioning)
-  const optionsReco = _optionsReco(score, dvol, rv, spot, maxPain)
+  const optionsReco = _optionsReco(score, dvol, rv, spot, maxPain, funding, basisAvg)
 
   const expert = {
     label:    signalMeta?.label ?? '—',

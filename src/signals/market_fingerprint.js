@@ -16,6 +16,11 @@ import { get as idbGet, set as idbSet } from 'idb-keyval'
 import { fnv1a } from '../data/data_store/cache.js'
 import { FINGERPRINT_BUCKETING, TIMING, STORAGE_LIMITS } from '../config/signal_calibration.js'
 
+// ── Multi-timeframe configuration ────────────────────────────────────────────
+
+/** Supported tracking timeframes. */
+export const TIMEFRAMES = ['1h', '24h', '7d']
+
 // ── Bucketing ─────────────────────────────────────────────────────────────────
 
 /**
@@ -67,6 +72,95 @@ function basisBucket(basisPct) {
   if (basisPct >= basis_cfg.contango)     return 'contango'
   if (basisPct >= basis_cfg.flat)         return 'flat'
   return 'backwardation'
+}
+
+// ── Move classification ───────────────────────────────────────────────────────
+
+/**
+ * Classifie un mouvement de prix en % dans l'une des 5 catégories.
+ *
+ * Seuils (en %) :
+ *   bigDown  : move < -3
+ *   down     : -3 ≤ move < -0.1
+ *   flat     : -0.1 ≤ move ≤ 0.1
+ *   up       :  0.1 < move ≤ 3
+ *   bigUp    : move > 3
+ *
+ * @param {number} move — variation en %
+ * @returns {'bigDown'|'down'|'flat'|'up'|'bigUp'}
+ */
+export function classifyMove(move) {
+  if (move < -3)   return 'bigDown'
+  if (move < -0.1) return 'down'
+  if (move <= 0.1) return 'flat'
+  if (move <= 3)   return 'up'
+  return 'bigUp'
+}
+
+// ── Per-timeframe stat helpers ────────────────────────────────────────────────
+
+/**
+ * Retourne une structure de statistiques vide pour un timeframe.
+ * @returns {{ occurrences: number, upMoves: number, downMoves: number, flatMoves: number, avgUpMove: number, avgDownMove: number, distribution: Object }}
+ */
+function emptyTimeframeStat() {
+  return {
+    occurrences: 0,
+    upMoves:     0,
+    downMoves:   0,
+    flatMoves:   0,
+    avgUpMove:   0,
+    avgDownMove: 0,
+    distribution: { bigDown: 0, down: 0, flat: 0, up: 0, bigUp: 0 },
+  }
+}
+
+/**
+ * Intègre un mouvement dans une statistique de timeframe (mise à jour in-place).
+ * Met à jour les compteurs directionnels, les moyennes courantes et la distribution.
+ *
+ * @param {{ occurrences: number, upMoves: number, downMoves: number, flatMoves: number, avgUpMove: number, avgDownMove: number, distribution: Object }} stat
+ * @param {number} move — variation en %
+ */
+function _applyMove(stat, move) {
+  stat.occurrences += 1
+  stat.distribution[classifyMove(move)] += 1
+
+  if (move > 0.1) {
+    stat.upMoves += 1
+    stat.avgUpMove = ((stat.avgUpMove * (stat.upMoves - 1)) + move) / stat.upMoves
+  } else if (move < -0.1) {
+    stat.downMoves += 1
+    stat.avgDownMove = ((stat.avgDownMove * (stat.downMoves - 1)) + move) / stat.downMoves
+  } else {
+    stat.flatMoves += 1
+  }
+}
+
+/**
+ * Calcule les métriques avancées (probabilités, espérance, risk/reward)
+ * à partir d'une statistique de timeframe.
+ *
+ * @param {{ occurrences: number, upMoves: number, downMoves: number, avgUpMove: number, avgDownMove: number, distribution: Object }} stat
+ * @returns {{ probUp: number, probDown: number, expectedValue: number, riskReward: number|null, distribution: Object }|null}
+ */
+export function computeAdvancedStats(stat) {
+  if (!stat || !stat.occurrences) return null
+
+  const probUp   = stat.upMoves   / stat.occurrences
+  const probDown = stat.downMoves / stat.occurrences
+  const expectedValue = (probUp * stat.avgUpMove) + (probDown * stat.avgDownMove)
+  const riskReward = stat.avgDownMove !== 0
+    ? Math.abs(stat.avgUpMove / stat.avgDownMove)
+    : null
+
+  return {
+    probUp:        Math.round(probUp   * 1000) / 1000,
+    probDown:      Math.round(probDown * 1000) / 1000,
+    expectedValue: Math.round(expectedValue * 100) / 100,
+    riskReward:    riskReward != null ? Math.round(riskReward * 100) / 100 : null,
+    distribution:  stat.distribution,
+  }
 }
 
 // ── Fingerprint ───────────────────────────────────────────────────────────────
