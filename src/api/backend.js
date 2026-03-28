@@ -145,12 +145,15 @@ export async function fetchSignals(asset) {
     pcRatio:      market.pcRatio      ?? null,
   }
 
-  const inputKey  = `signals:${a}:inputs`
-  const resultKey = `signals:${a}:result`
+  const cacheVersion = 'v1'
+  const inputKey  = `signals:${a}:${cacheVersion}:inputs`
+  const resultKey = `signals:${a}:${cacheVersion}:result`
   const prevHash = smartCache.getHash(inputKey)
   smartCache.set(inputKey, signalInputs)
 
-  if (prevHash != null && !smartCache.hasChanged(inputKey, prevHash)) {
+  const inputsChanged = prevHash === null ? true : smartCache.hasChanged(inputKey, prevHash)
+
+  if (!inputsChanged) {
     const cached = smartCache.get(resultKey)
     if (cached) return cached
   }
