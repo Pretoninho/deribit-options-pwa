@@ -156,13 +156,8 @@ export async function fetchSignals(asset) {
   const nextHash = hashData(signalInputs)
   if (prevEntry && cached) {
     if (prevEntry.hash === nextHash) {
-      const refreshed = { ...cached, timestamp: Date.now() }
-      smartCache.set(resultKey, refreshed)
-      return refreshed
+      return cached
     }
-  } else if (Boolean(prevEntry) !== Boolean(cached)) {
-    smartCache.delete(inputKey)
-    smartCache.delete(resultKey)
   }
 
   const { scores, global, signal, noviceData, maxPain, positioning } = computeSignal(signalInputs)
