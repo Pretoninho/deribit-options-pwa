@@ -151,17 +151,16 @@ export async function fetchSignals(asset) {
 
   const inputKey  = buildSignalCacheKey(assetCode, 'inputs')
   const resultKey = buildSignalCacheKey(assetCode, 'result')
-  const prevInputs = smartCache.get(inputKey)
+  const prevEntry = smartCache.get(inputKey)
   const cached = smartCache.get(resultKey)
-  if (prevInputs && cached) {
-    const prevHash = hashData(prevInputs)
-    const nextHash = hashData(signalInputs)
-    if (prevHash === nextHash) {
-      const refreshed = { ...cached, timestamp: Date.now() }
-      smartCache.set(resultKey, refreshed)
-      return refreshed
+  const nextHash = hashData(signalInputs)
+  if (prevEntry && cached) {
+    if (prevEntry.hash === nextHash) {
+      cached.timestamp = Date.now()
+      smartCache.set(resultKey, cached)
+      return cached
     }
-  } else if ((prevInputs && !cached) || (!prevInputs && cached)) {
+  } else if ((prevEntry && !cached) || (!prevEntry && cached)) {
     smartCache.delete(inputKey)
     smartCache.delete(resultKey)
   }
@@ -180,7 +179,7 @@ export async function fetchSignals(asset) {
     timestamp:  Date.now(),
   }
 
-  smartCache.set(inputKey, signalInputs)
+  smartCache.set(inputKey, { hash: nextHash, inputs: signalInputs })
   smartCache.set(resultKey, result)
   return result
 }
