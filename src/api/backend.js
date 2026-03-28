@@ -112,12 +112,12 @@ export async function fetchMarket(asset) {
  * }>}
  */
 export async function fetchSignals(asset) {
-  const a = asset.toUpperCase()
+  const assetCode = asset.toUpperCase()
 
   const [marketResult, onchainResult, fearGreedResult, hashRateResult] =
     await Promise.allSettled([
-      fetchMarket(a),
-      getOnChainSnapshot(a),
+      fetchMarket(assetCode),
+      getOnChainSnapshot(assetCode),
       getFearGreedIndex(),
       getHashRateHistory(),
     ])
@@ -142,24 +142,29 @@ export async function fetchSignals(asset) {
     basisAvg:     market.basisAvg     ?? null,
     onChainScore: onChainNorm.composite.onChainScore,
     spot:         market.spot         ?? null,
-    asset:        a,
+    asset:        assetCode,
     lsRatio:      market.lsRatio      ?? null,
     pcRatio:      market.pcRatio      ?? null,
   }
 
-  const inputKey  = `signals:${a}:${SIGNAL_CACHE_VERSION}:inputs`
-  const resultKey = `signals:${a}:${SIGNAL_CACHE_VERSION}:result`
+  const inputKey  = `signals:${assetCode}:${SIGNAL_CACHE_VERSION}:inputs`
+  const resultKey = `signals:${assetCode}:${SIGNAL_CACHE_VERSION}:result`
   const prevInputs = smartCache.get(inputKey)
   const prevHash = prevInputs ? hashData(prevInputs) : null
   const cached = smartCache.get(resultKey)
   const nextHash = hashData(signalInputs)
-  const shouldRecompute = prevHash === null || nextHash !== prevHash
-  if (!shouldRecompute && cached) return cached
+  const cacheReady = prevHash !== null && cached
+  const shouldRecompute = !cacheReady || nextHash !== prevHash
+  if (!shouldRecompute && cached) {
+    const refreshed = { ...cached, timestamp: Date.now() }
+    smartCache.set(resultKey, refreshed)
+    return refreshed
+  }
 
   const { scores, global, signal, noviceData, maxPain, positioning } = computeSignal(signalInputs)
 
   const result = {
-    asset:      a,
+    asset:      assetCode,
     spot:       market.spot ?? null,
     scores,
     global,
