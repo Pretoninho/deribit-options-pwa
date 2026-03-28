@@ -151,12 +151,9 @@ export async function fetchSignals(asset) {
   const prevHash = smartCache.getHash(inputKey)
   smartCache.set(inputKey, signalInputs)
 
-  const inputsChanged = prevHash === null ? true : smartCache.hasChanged(inputKey, prevHash)
-
-  if (!inputsChanged) {
-    const cached = smartCache.get(resultKey)
-    if (cached) return cached
-  }
+  const cached = smartCache.get(resultKey)
+  const inputsChanged = smartCache.hasChanged(inputKey, prevHash) || !cached
+  if (!inputsChanged && cached) return cached
 
   const { scores, global, signal, noviceData, maxPain, positioning } = computeSignal(signalInputs)
 
