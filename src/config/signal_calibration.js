@@ -241,11 +241,18 @@ export const ONCHAIN_SIGNALS = {
     significantDelta: 5,      // >= 5 points change = momentum signal
   },
 
-  // On-Chain Score Interpretation
+  // On-Chain Score Interpretation (Expert)
   scoreInterpretation: {
     favorable: 70,            // >= 70 = favorable on-chain context
     neutral: 50,              // >= 50 = neutral
     weak: 35,                 // <= 35 = weak on-chain context
+  },
+
+  // On-Chain Score Interpretation (Novice UI)
+  scoreInterpretationNovice: {
+    positive: 65,             // >= 65 = positive sentiment
+    neutral: 45,              // >= 45 = neutral sentiment
+    negative: 0,              // < 45 = negative sentiment
   },
 }
 
@@ -360,6 +367,9 @@ export const TIMING = {
   // Polling & Refresh Intervals
   SETTLEMENT_CHECK_INTERVAL: 30_000, // 30 seconds
   SIGNAL_POLLING_INTERVAL: 15_000,   // 15 seconds
+
+  // Liquidation Accumulation Window
+  LIQUIDATION_WINDOW_MS: 3_600_000, // 1 hour
 
   // Pattern Outcome Windows
   outcomeWindows: {
