@@ -193,18 +193,58 @@ export async function captureSettlement(
       hash: null,
     }
 
-    // 6. Hash sur toutes les données sauf capturedAt (reproductible)
-    const { capturedAt: _ca, hash: _h, ...hashable } = entry
+    // 6. Hash ONLY on immutable settlement data (not market context)
+    // Market context (spotPrice, ivRank, maxPain) changes after settlement,
+    // so it shouldn't be part of the hash for reliable lookups.
+    const hashable = {
+      asset: entry.asset,
+      dateKey: entry.dateKey,
+      settlementPrice: entry.settlementPrice,
+      settlementTimestamp: entry.settlementTimestamp,
+      source: entry.source,
+    }
     entry.hash = fnv1a(JSON.stringify(hashable))
 
     // 7. Persistance avec déduplication par dateKey
     const history = (await idbGet(_idbKey(asset))) ?? []
-    const alreadyExists = history.some(s => s.dateKey === dateKey)
+    const existingEntry = history.find(s => s.dateKey === dateKey)
 
-    if (alreadyExists) {
-      return { ...entry, isDuplicate: true }
+    if (existingEntry) {
+      // Entry already exists, but preserve new context data if available
+      const updated = { ...existingEntry }
+
+      // Update context only if new values are non-null
+      if (spotPrice !== null) updated.spotPrice = spotPrice
+      if (ivRank !== null) updated.ivRank = ivRank
+      if (maxPainStrike !== null) updated.maxPainStrike = maxPainStrike
+
+      // Recalculate delta percentages with updated context
+      if (spotPrice !== null) {
+        updated.spotDeltaPct = (settlement.settlementPrice - spotPrice) / spotPrice * 100
+        updated.spotDeltaLabel = `${updated.spotDeltaPct > 0 ? '+' : ''}${updated.spotDeltaPct.toFixed(2)}%`
+      }
+      if (maxPainStrike !== null && spotPrice !== null) {
+        updated.maxPainDeltaPct = (settlement.settlementPrice - maxPainStrike) / maxPainStrike * 100
+        updated.maxPainDeltaLabel = `${updated.maxPainDeltaPct > 0 ? '+' : ''}${updated.maxPainDeltaPct.toFixed(2)}%`
+      }
+
+      // Replace in history
+      const idx = history.findIndex(s => s.dateKey === dateKey)
+      history[idx] = updated
+
+      await idbSet(_idbKey(asset), history)
+
+      console.log(
+        `[Settlement] ${asset} enrichi (${dateKey})` +
+        (spotPrice !== null ? ` · spot: $${spotPrice.toLocaleString('en-US')}` : '') +
+        (ivRank !== null ? ` · IV: ${ivRank.toFixed(1)}%` : '') +
+        ` · hash: ${entry.hash}`
+      )
+
+      return { ...updated, isDuplicate: 'enriched' }
     }
 
+    // New entry
     history.push(entry)
     if (history.length > MAX_HISTORY) {
       history.splice(0, history.length - MAX_HISTORY)
@@ -216,7 +256,8 @@ export async function captureSettlement(
       `[Settlement] ${asset} capturé` +
       ` $${entry.settlementPrice.toLocaleString('en-US')}` +
       ` · hash: ${entry.hash}` +
-      (entry.isLate ? ' (late)' : '')
+      (entry.isLate ? ' (late)' : '') +
+      (spotPrice === null || ivRank === null ? ' ⚠️ context incomplete' : '')
     )
 
     return { ...entry, isDuplicate: false }
@@ -261,6 +302,7 @@ export async function getSettlementByDate(asset, dateKey) {
 
 /**
  * Retourne le settlement correspondant à un hash (BTC + ETH).
+ * Handles hash changes due to API recomputations.
  * @param {string} hash
  * @returns {Promise<object|null>}
  */
@@ -270,9 +312,60 @@ export async function getSettlementByHash(hash) {
       getSettlementHistory('BTC', 365),
       getSettlementHistory('ETH', 365),
     ])
-    return [...btc, ...eth].find(s => s.hash === hash) ?? null
+    const allSettlements = [...btc, ...eth]
+
+    // First attempt: exact hash match
+    const exact = allSettlements.find(s => s?.hash === hash)
+    if (exact) return exact
+
+    // Fallback: recompute expected hash (in case of null data changes)
+    for (const settlement of allSettlements) {
+      if (!settlement) continue
+      const expectedHash = fnv1a(JSON.stringify({
+        asset: settlement.asset,
+        dateKey: settlement.dateKey,
+        settlementPrice: settlement.settlementPrice,
+        settlementTimestamp: settlement.settlementTimestamp,
+        source: settlement.source,
+      }))
+      if (expectedHash === hash) return settlement
+    }
+
+    return null
   } catch (_) {
     return null
+  }
+}
+
+/**
+ * Validate settlement data integrity
+ * Checks for null critical fields that would indicate capture issues
+ * @param {object} settlement
+ * @returns {object} validation result with status and issues
+ */
+export function validateSettlement(settlement) {
+  const issues = []
+
+  if (!settlement) return { valid: false, issues: ['Settlement is null'] }
+  if (!settlement.asset) issues.push('Missing asset')
+  if (!settlement.dateKey) issues.push('Missing dateKey')
+  if (settlement.settlementPrice === null || settlement.settlementPrice === undefined) {
+    issues.push('Missing or null settlementPrice')
+  }
+  if (!settlement.settlementTimestamp) issues.push('Missing settlementTimestamp')
+  if (!settlement.hash) issues.push('Missing hash')
+
+  // Context data CAN be null (market data during settlement), but log it
+  const contextIssues = []
+  if (settlement.spotPrice === null) contextIssues.push('spotPrice is null')
+  if (settlement.ivRank === null) contextIssues.push('ivRank is null')
+  if (settlement.maxPainStrike === null) contextIssues.push('maxPainStrike is null')
+
+  return {
+    valid: issues.length === 0,
+    issues,
+    contextWarnings: contextIssues,
+    settlement,
   }
 }
 
