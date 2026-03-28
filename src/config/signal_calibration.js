@@ -506,10 +506,34 @@ export const SNAPSHOT_CONFIG = {
 // UTILITY: Get weight scenario based on data availability
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function getWeightScenario(hasOnChain, hasPositioning) {
-  if (hasOnChain && hasPositioning) return SCORE_WEIGHTS.complete
-  if (hasOnChain && !hasPositioning) return SCORE_WEIGHTS.withoutPositioning
+/**
+ * Get appropriate weight scenario based on data availability
+ * @param {boolean} hasS5 - Has on-chain score
+ * @param {boolean} hasS6 - Has positioning score
+ * @returns {object} Weight scenario
+ */
+export function getWeightScenario(hasS5, hasS6) {
+  if (hasS5 && hasS6) return SCORE_WEIGHTS.complete
+  if (hasS5 && !hasS6) return SCORE_WEIGHTS.withoutPositioning
   return SCORE_WEIGHTS.minimal
+}
+
+/**
+ * Calculate individual weights for components
+ * @param {boolean} hasS5 - Has on-chain component
+ * @param {boolean} hasS6 - Has positioning component
+ * @returns {object} { w1, w2, w3, w4, w5, w6 }
+ */
+export function getComponentWeights(hasS5, hasS6) {
+  const weights = getWeightScenario(hasS5, hasS6)
+  return {
+    w1: weights.s1_iv * 100,
+    w2: weights.s2_funding * 100,
+    w3: weights.s3_basis * 100,
+    w4: weights.s4_ivVsRv * 100,
+    w5: weights.s5_onChain * 100,
+    w6: weights.s6_positioning * 100,
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
