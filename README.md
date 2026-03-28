@@ -26,7 +26,7 @@ Le sélecteur d'actif (BTC / ETH) dans le header est global — il met à jour t
 
 ## Mode d’emploi — page Calibration
 
-La page **Calibration** permet d’ajuster les seuils utilisés par le moteur de signaux, la détection d’anomalies et le bucketing des patterns. Les changements sont appliqués **en temps réel** et **persistés localStorage** (ils restent actifs après rechargement).
+La page **Calibration** permet d’ajuster les seuils utilisés par le moteur de signaux, la détection d’anomalies et le bucketing des patterns. Les changements sont appliqués **en temps réel** et **persistés dans le localStorage** (ils restent actifs après rechargement).
 
 ### Accès
 - Ouvrez l’onglet **Calibration** depuis la navigation.
