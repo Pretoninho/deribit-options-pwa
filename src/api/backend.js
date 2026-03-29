@@ -26,7 +26,8 @@ import {
 import { normalizeOnChain } from '../data/normalizers/format_data.js'
 import { computeSignal } from '../signals/signal_engine.js'
 import { hashData, smartCache } from '../data/data_store/cache.js'
-import { createFingerprint, recordPattern, updateOutcomes, getAllPatterns } from '../signals/market_fingerprint.js'
+import { createFingerprint, recordPattern, updateOutcomes, getAllPatterns, getPatternStats } from '../signals/market_fingerprint.js'
+import { savePatternAuditEntry } from '../signals/pattern_audit.js'
 
 const SIGNAL_CACHE_VERSION = 1
 const buildSignalCacheKey = (assetCode, kind) =>
@@ -195,7 +196,24 @@ export async function fetchSignals(asset) {
       lsRatio:    market.lsRatio ?? null,
       basisPct:   market.basisAvg ?? null,
     })
-    recordPattern(fingerprint, market.spot).catch(() => {})
+    recordPattern(fingerprint, market.spot)
+      .then(() => getPatternStats(fingerprint.hash))
+      .then(stats => {
+        savePatternAuditEntry({
+          asset:       assetCode,
+          hash:        fingerprint.hash,
+          config:      fingerprint.config,
+          inputs: {
+            ivRank:     ivRank,
+            fundingAnn: market.funding?.rateAnn ?? null,
+            lsRatio:    market.lsRatio ?? null,
+            basisPct:   market.basisAvg ?? null,
+          },
+          spot:        market.spot,
+          occurrences: stats?.occurrences ?? 1,
+        })
+      })
+      .catch(() => {})
 
     // Met à jour les outcomes de tous les patterns connus avec le prix actuel
     getAllPatterns().then(patterns => {
