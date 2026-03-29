@@ -143,13 +143,13 @@ export default function PatternAuditLog() {
             {/* Colonne header */}
             <div style={{
               display: 'grid',
-              gridTemplateColumns: '110px 50px 80px 1fr auto',
+              gridTemplateColumns: '110px 50px 80px 1fr 44px 44px',
               gap: 8, padding: '5px 14px',
               borderBottom: '1px solid var(--border)',
               position: 'sticky', top: 0,
               background: 'var(--bg-surface)',
             }}>
-              {['Timestamp', 'Asset', 'Hash', 'Fingerprint / Inputs', 'Obs'].map(h => (
+              {['Timestamp', 'Asset', 'Hash', 'Fingerprint / Inputs', 'Obs', 'News'].map(h => (
                 <span key={h} style={{
                   fontFamily: 'var(--font-body)', fontSize: 9,
                   color: 'var(--text-ghost)', textTransform: 'uppercase', letterSpacing: '0.4px',
@@ -159,51 +159,80 @@ export default function PatternAuditLog() {
               ))}
             </div>
 
-            {entries.map((e, i) => (
-              <div key={i} style={{
-                display: 'grid',
-                gridTemplateColumns: '110px 50px 80px 1fr auto',
-                alignItems: 'start',
-                gap: 8,
-                padding: '8px 14px',
-                borderBottom: '1px solid rgba(46,51,64,.4)',
-              }}>
-                {/* Timestamp */}
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-ghost)' }}>
-                  {fmtTs(e.ts)}
-                </span>
-
-                {/* Asset */}
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', fontWeight: 700 }}>
-                  {e.asset ?? '—'}
-                </span>
-
-                {/* Hash court + spot */}
-                <div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>
-                    {e.hash?.slice(0, 8) ?? '—'}
-                  </div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-ghost)' }}>
-                    ${e.spot != null ? e.spot.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—'}
-                  </div>
-                </div>
-
-                {/* Fingerprint buckets + valeurs mesurées */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <ConfigChips config={e.config} />
-                  <InputsRow inputs={e.inputs} />
-                </div>
-
-                {/* Occurrences */}
-                <span style={{
-                  fontFamily: 'var(--font-mono)', fontSize: 12,
-                  color: 'var(--accent)', fontWeight: 700,
-                  whiteSpace: 'nowrap',
+            {entries.map((e, i) => {
+              const nw = e.newsWindow
+              return (
+                <div key={i} style={{
+                  display: 'grid',
+                  gridTemplateColumns: '110px 50px 80px 1fr 44px 44px',
+                  alignItems: 'start',
+                  gap: 8,
+                  padding: '8px 14px',
+                  borderBottom: '1px solid rgba(46,51,64,.4)',
+                  background: nw?.inWindow ? 'rgba(240,71,107,.04)' : undefined,
                 }}>
-                  {e.occurrences ?? 0}×
-                </span>
-              </div>
-            ))}
+                  {/* Timestamp */}
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-ghost)' }}>
+                    {fmtTs(e.ts)}
+                  </span>
+
+                  {/* Asset */}
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', fontWeight: 700 }}>
+                    {e.asset ?? '—'}
+                  </span>
+
+                  {/* Hash court + spot */}
+                  <div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>
+                      {e.hash?.slice(0, 8) ?? '—'}
+                    </div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-ghost)' }}>
+                      ${e.spot != null ? e.spot.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—'}
+                    </div>
+                  </div>
+
+                  {/* Fingerprint buckets + valeurs mesurées */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <ConfigChips config={e.config} />
+                    <InputsRow inputs={e.inputs} />
+                  </div>
+
+                  {/* Occurrences */}
+                  <span style={{
+                    fontFamily: 'var(--font-mono)', fontSize: 12,
+                    color: 'var(--accent)', fontWeight: 700,
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {e.occurrences ?? 0}×
+                  </span>
+
+                  {/* News window flag */}
+                  <div title={nw?.event ? `${nw.event.currency} ${nw.event.event} (±${nw.minutesAway}min)` : undefined}>
+                    {nw?.inWindow ? (
+                      <span style={{
+                        fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700,
+                        color: 'var(--put)',
+                        padding: '2px 5px', borderRadius: 3,
+                        background: 'rgba(240,71,107,.12)', border: '1px solid rgba(240,71,107,.3)',
+                        whiteSpace: 'nowrap',
+                        display: 'inline-block',
+                      }}>
+                        {nw.isPre ? '▶' : '◀'} {nw.event?.currency ?? 'NEWS'}
+                      </span>
+                    ) : nw?.minutesAway != null && nw.minutesAway < 60 ? (
+                      <span style={{
+                        fontFamily: 'var(--font-mono)', fontSize: 9,
+                        color: 'var(--neutral)', whiteSpace: 'nowrap',
+                      }}>
+                        ~{nw.minutesAway}min
+                      </span>
+                    ) : (
+                      <span style={{ color: 'var(--text-ghost)', fontSize: 9 }}>—</span>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )
       )}
