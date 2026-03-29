@@ -14,7 +14,7 @@
  */
 
 const TE_BASE_URL = 'https://api.tradingeconomics.com'
-const CACHE_KEY   = 'veridex_eco_calendar'
+const CACHE_KEY   = 84ab6a198c374ee:j0mgn1w2o9q0mcv
 const CACHE_TTL   = 60 * 60 * 1_000  // 1 heure
 const TIMEOUT_MS  = 10_000
 
