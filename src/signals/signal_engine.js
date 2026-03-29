@@ -24,7 +24,8 @@ import { fnv1a } from '../data/data_store/cache.js'
 import { calculateGainExample } from './signal_interpreter.js'
 import { calculateMaxPainByExpiry, interpretMaxPain } from '../core/volatility/max_pain.js'
 import { calcPositioningScore, interpretPositioning } from './positioning_score.js'
-import { SCORE_THRESHOLDS, SIGNAL_BOUNDARIES, TIMING, STORAGE_LIMITS, getComponentWeights } from '../config/signal_calibration.js'
+import { TIMING, STORAGE_LIMITS, getComponentWeights } from '../config/signal_calibration.js'
+import { getCalibration } from './signal_calibration.js'
 
 // ── Filtre DVOL ───────────────────────────────────────────────────────────────
 
@@ -37,12 +38,13 @@ import { SCORE_THRESHOLDS, SIGNAL_BOUNDARIES, TIMING, STORAGE_LIMITS, getCompone
  */
 export function dvolFilter(dvolCurrent) {
   if (dvolCurrent == null) return 1
+  const cal = getCalibration()
 
   // Marché trop calme → signal faible
-  if (dvolCurrent < 40) return 0.7
+  if (dvolCurrent < cal.dvol_calm_max) return 0.7
 
   // Marché optimal
-  if (dvolCurrent < 70) return 1
+  if (dvolCurrent < cal.dvol_agitated_min) return 1
 
   // Marché trop agité → réduire la confiance
   return 0.8
@@ -59,11 +61,11 @@ export function scoreIV(dvol) {
   if (!dvol) return null
   const avg30 = (dvol.monthMin + dvol.monthMax) / 2
   const ratio = dvol.current / avg30
-  const t = SCORE_THRESHOLDS.IV
-  if (ratio >= t.extreme) return 100
-  if (ratio >= t.high) return 75
-  if (ratio >= t.normal) return 50
-  if (ratio >= t.low) return 25
+  const cal = getCalibration()
+  if (ratio >= cal.iv_ratio_t4) return 100
+  if (ratio >= cal.iv_ratio_t3) return 75
+  if (ratio >= cal.iv_ratio_t2) return 50
+  if (ratio >= cal.iv_ratio_t1) return 25
   return 0
 }
 
@@ -76,11 +78,11 @@ export function scoreFunding(funding) {
   if (!funding) return null
   const r = funding.rateAnn ?? funding.avgAnn7d
   if (r == null) return null
-  const t = SCORE_THRESHOLDS.Funding
-  if (r >= t.extreme) return 100
-  if (r >= t.high) return 75
-  if (r >= t.normal) return 50
-  if (r >= t.zero) return 25
+  const cal = getCalibration()
+  if (r >= cal.funding_t4) return 100
+  if (r >= cal.funding_t3) return 75
+  if (r >= cal.funding_t2) return 50
+  if (r >= cal.funding_t1) return 25
   return 0
 }
 
@@ -91,11 +93,11 @@ export function scoreFunding(funding) {
  */
 export function scoreBasis(basisAvg) {
   if (basisAvg == null) return null
-  const t = SCORE_THRESHOLDS.Basis
-  if (basisAvg >= t.extreme) return 100
-  if (basisAvg >= t.high) return 75
-  if (basisAvg >= t.normal) return 50
-  if (basisAvg >= t.zero) return 25
+  const cal = getCalibration()
+  if (basisAvg >= cal.basis_score_t4) return 100
+  if (basisAvg >= cal.basis_score_t3) return 75
+  if (basisAvg >= cal.basis_score_t2) return 50
+  if (basisAvg >= cal.basis_score_t1) return 25
   return 0
 }
 
@@ -108,10 +110,10 @@ export function scoreBasis(basisAvg) {
 export function scoreIVvsRV(dvol, rv) {
   if (!dvol || !rv) return null
   const premium = dvol.current - rv.current
-  const t = SCORE_THRESHOLDS.IVvRV
-  if (premium >= t.extreme) return 100
-  if (premium >= t.high) return 75
-  if (premium >= t.neutral) return 50
+  const cal = getCalibration()
+  if (premium >= cal.ivvsrv_t3) return 100
+  if (premium >= cal.ivvsrv_t2) return 75
+  if (premium >= cal.ivvsrv_t1) return 50
   return 0
 }
 
@@ -167,22 +169,22 @@ export function calcGlobalScore(s1, s2, s3, s4, s5, s6) {
  */
 export function getSignal(score) {
   if (score == null) return null
-  const b = SIGNAL_BOUNDARIES
-  if (score >= b.exceptional) return {
+  const cal = getCalibration()
+  if (score >= cal.signal_fav_max) return {
     label:  '🔥 Exceptionnel',
     color:  'var(--call)',
     bg:     'rgba(0,229,160,.08)',
     border: 'rgba(0,229,160,.3)',
     action: 'Conditions exceptionnelles — multiples opportunités actives',
   }
-  if (score >= b.favorable) return {
+  if (score >= cal.signal_neutr_max) return {
     label:  '✓ Favorable',
     color:  'var(--atm)',
     bg:     'rgba(255,215,0,.06)',
     border: 'rgba(255,215,0,.3)',
     action: 'Conditions favorables — bon moment pour agir',
   }
-  if (score >= b.neutral) return {
+  if (score >= cal.signal_unfav_max) return {
     label:  '~ Neutre',
     color:  'var(--accent2)',
     bg:     'rgba(255,107,53,.06)',
@@ -356,7 +358,6 @@ export function clearAnomalyLog() {
  * Un snapshot attendu : { spreadPct, fundingBinance, fundingDeribit, ivRank, lsRatio, oiDelta }
  */
 const MONITORED_INDICATORS = ['spreadPct', 'fundingBinance', 'fundingDeribit', 'ivRank', 'lsRatio', 'oiDelta']
-const ANOMALY_THRESHOLD = TIMING.ANOMALY_THRESHOLD
 const ANOMALY_WINDOW_MS = TIMING.ANOMALY_WINDOW_MS
 
 /** Dernier snapshot + timestamp pour la détection d'anomalies */
@@ -403,7 +404,7 @@ export function detectMarketAnomaly(snapshot, asset) {
   _lastSnapshot = { ...snapshot }
   _lastSnapshotTs = now
 
-  if (changed.length >= ANOMALY_THRESHOLD) {
+  if (changed.length >= getCalibration().anomaly_threshold) {
     const result = { anomaly: true, changedIndicators: changed, asset }
     _persistAnomaly(result, asset)
     return result

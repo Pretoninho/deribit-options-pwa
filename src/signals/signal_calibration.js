@@ -48,6 +48,7 @@ export const DEFAULT_CALIBRATION = {
   basis_score_t2: SCORE_THRESHOLDS.Basis.normal,   // 3
   basis_score_t3: SCORE_THRESHOLDS.Basis.high,     // 8
   basis_score_t4: SCORE_THRESHOLDS.Basis.extreme,  // 15
+  basis_score_t4: SCORE_THRESHOLDS.Basis.extreme,  // 15
 
   // --- Score IV/RV – prime IV − RV ---
   ivvsrv_t1: SCORE_THRESHOLDS.IVvRV.neutral,  // 0
