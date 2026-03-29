@@ -25,6 +25,11 @@ import {
 } from '../data/providers/onchain.js'
 import { normalizeOnChain } from '../data/normalizers/format_data.js'
 import { computeSignal } from '../signals/signal_engine.js'
+import { hashData, smartCache } from '../data/data_store/cache.js'
+
+const SIGNAL_CACHE_VERSION = 1
+const buildSignalCacheKey = (assetCode, kind) =>
+  `signals:${assetCode}:v${SIGNAL_CACHE_VERSION}:${kind}`
 
 /**
  * Fetch raw normalized market data for the given asset directly from providers.
@@ -109,12 +114,12 @@ export async function fetchMarket(asset) {
  * }>}
  */
 export async function fetchSignals(asset) {
-  const a = asset.toUpperCase()
+  const assetCode = asset.toUpperCase()
 
   const [marketResult, onchainResult, fearGreedResult, hashRateResult] =
     await Promise.allSettled([
-      fetchMarket(a),
-      getOnChainSnapshot(a),
+      fetchMarket(assetCode),
+      getOnChainSnapshot(assetCode),
       getFearGreedIndex(),
       getHashRateHistory(),
     ])
@@ -132,20 +137,37 @@ export async function fetchSignals(asset) {
     exchangeFlows:   null,
   })
 
-  const { scores, global, signal, noviceData, maxPain, positioning } = computeSignal({
+  const signalInputs = {
     dvol:         market.dvol         ?? null,
     funding:      market.funding      ?? null,
     rv:           market.rv           ?? null,
     basisAvg:     market.basisAvg     ?? null,
     onChainScore: onChainNorm.composite.onChainScore,
     spot:         market.spot         ?? null,
-    asset:        a,
+    asset:        assetCode,
     lsRatio:      market.lsRatio      ?? null,
     pcRatio:      market.pcRatio      ?? null,
-  })
+  }
 
-  return {
-    asset:      a,
+  const inputKey  = buildSignalCacheKey(assetCode, 'inputs')
+  const resultKey = buildSignalCacheKey(assetCode, 'result')
+  const prevEntry = smartCache.get(inputKey)
+  const cached = smartCache.get(resultKey)
+  let nextHash = null
+  if (prevEntry && cached) {
+    nextHash = hashData(signalInputs)
+    if (prevEntry.hash === nextHash) {
+      const refreshed = { ...cached, timestamp: Date.now() }
+      smartCache.set(resultKey, refreshed)
+      return refreshed
+    }
+  }
+  if (!nextHash) nextHash = hashData(signalInputs)
+
+  const { scores, global, signal, noviceData, maxPain, positioning } = computeSignal(signalInputs)
+
+  const result = {
+    asset:      assetCode,
     spot:       market.spot ?? null,
     scores,
     global,
@@ -155,4 +177,8 @@ export async function fetchSignals(asset) {
     positioning,
     timestamp:  Date.now(),
   }
+
+  smartCache.set(inputKey, { hash: nextHash, inputs: signalInputs })
+  smartCache.set(resultKey, result)
+  return result
 }
