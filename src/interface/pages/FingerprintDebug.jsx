@@ -3,16 +3,21 @@
  *
  * Page de debug/monitoring pour le système de Market Fingerprinting.
  * Affiche en temps réel :
+ *   - Paramètres de calibration actifs (CalibrationDebugPanel)
  *   - Statistiques globales (health status)
  *   - Tableau de tous les patterns enregistrés
  *   - Détail du pattern sélectionné (config, stats avancées par timeframe, timeline outcomes)
  *   - Distribution des mouvements (histogramme)
+ *   - Journal d'audit des détections (PatternAuditLog)
  */
 
 import { useState } from 'react'
 import useFingerprintDebug from '../hooks/useFingerprintDebug.js'
 import { TIMEFRAMES } from '../../signals/market_fingerprint.js'
-import CalibrationProfileSelector from '../components/CalibrationProfileSelector.jsx'
+import CalibrationProfileSelector      from '../components/CalibrationProfileSelector.jsx'
+import CalibrationDebugPanel           from '../components/CalibrationDebugPanel.jsx'
+import PatternAuditLog                 from '../components/PatternAuditLog.jsx'
+import ExportDetectedPatternsButton    from '../components/ExportDetectedPatternsButton.jsx'
 import './FingerprintDebug.css'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -412,11 +417,15 @@ export default function FingerprintDebug() {
         <div className="page-title">Fingerprint <span>Debug</span></div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
           <CalibrationProfileSelector onChange={refresh} />
+          <ExportDetectedPatternsButton />
           <div style={{ fontFamily: 'var(--font-body)', fontSize: 10, color: 'var(--text-muted)' }}>
             Monitoring · Lecture seule
           </div>
         </div>
       </div>
+
+      {/* Paramètres de calibration actifs */}
+      <CalibrationDebugPanel />
 
       {/* Health bar */}
       <HealthStatus
@@ -461,6 +470,9 @@ export default function FingerprintDebug() {
           </div>
         </div>
       )}
+
+      {/* Journal d'audit des détections */}
+      <PatternAuditLog />
     </div>
   )
 }
