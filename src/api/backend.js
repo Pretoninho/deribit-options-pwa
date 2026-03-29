@@ -28,6 +28,8 @@ import { computeSignal } from '../signals/signal_engine.js'
 import { hashData, smartCache } from '../data/data_store/cache.js'
 import { createFingerprint, recordPattern, updateOutcomes, getAllPatterns, getPatternStats } from '../signals/market_fingerprint.js'
 import { savePatternAuditEntry } from '../signals/pattern_audit.js'
+import { getCachedEconomicEvents } from '../signals/economic_calendar.js'
+import { isInNewsWindow } from '../signals/inNewsWindow.js'
 
 const SIGNAL_CACHE_VERSION = 1
 const buildSignalCacheKey = (assetCode, kind) =>
@@ -196,6 +198,10 @@ export async function fetchSignals(asset) {
       lsRatio:    market.lsRatio ?? null,
       basisPct:   market.basisAvg ?? null,
     })
+    // Vérifie la fenêtre news (T±30min autour d'une annonce macro High)
+    const { events: ecoEvents }    = getCachedEconomicEvents()
+    const newsWindowResult         = isInNewsWindow(Date.now(), ecoEvents)
+
     recordPattern(fingerprint, market.spot)
       .then(() => getPatternStats(fingerprint.hash))
       .then(stats => {
@@ -211,6 +217,15 @@ export async function fetchSignals(asset) {
           },
           spot:        market.spot,
           occurrences: stats?.occurrences ?? 1,
+          newsWindow: {
+            inWindow:    newsWindowResult.inWindow,
+            minutesAway: newsWindowResult.minutesAway,
+            isPre:       newsWindowResult.isPre,
+            isPost:      newsWindowResult.isPost,
+            event:       newsWindowResult.nearestEvent
+              ? { ts: newsWindowResult.nearestEvent.ts, event: newsWindowResult.nearestEvent.event, currency: newsWindowResult.nearestEvent.currency }
+              : null,
+          },
         })
       })
       .catch(() => {})

@@ -18,6 +18,7 @@ import CalibrationProfileSelector      from '../components/CalibrationProfileSel
 import CalibrationDebugPanel           from '../components/CalibrationDebugPanel.jsx'
 import PatternAuditLog                 from '../components/PatternAuditLog.jsx'
 import ExportDetectedPatternsButton    from '../components/ExportDetectedPatternsButton.jsx'
+import EconomicCalendarPanel           from '../components/EconomicCalendarPanel.jsx'
 import './FingerprintDebug.css'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -426,6 +427,9 @@ export default function FingerprintDebug() {
 
       {/* Paramètres de calibration actifs */}
       <CalibrationDebugPanel />
+
+      {/* Calendrier économique — annonces High importance ±12h */}
+      <EconomicCalendarPanel />
 
       {/* Health bar */}
       <HealthStatus
