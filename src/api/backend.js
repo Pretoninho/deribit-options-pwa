@@ -26,6 +26,7 @@ import {
 import { normalizeOnChain } from '../data/normalizers/format_data.js'
 import { computeSignal } from '../signals/signal_engine.js'
 import { hashData, smartCache } from '../data/data_store/cache.js'
+import { createFingerprint, recordPattern, updateOutcomes, getAllPatterns } from '../signals/market_fingerprint.js'
 
 const SIGNAL_CACHE_VERSION = 1
 const buildSignalCacheKey = (assetCode, kind) =>
@@ -180,5 +181,27 @@ export async function fetchSignals(asset) {
 
   smartCache.set(inputKey, { hash: nextHash, inputs: signalInputs })
   smartCache.set(resultKey, result)
+
+  // Enregistre le fingerprint du marché actuel dans IndexedDB (fire-and-forget)
+  if (market.spot != null) {
+    const dvol = market.dvol
+    const ivRank = (dvol != null && dvol.monthMax > dvol.monthMin)
+      ? ((dvol.current - dvol.monthMin) / (dvol.monthMax - dvol.monthMin)) * 100
+      : null
+    const fingerprint = createFingerprint({
+      ivRank,
+      fundingPct: market.funding != null ? (market.funding.rateAnn ?? 0) / 100 : null,
+      spreadPct:  null,
+      lsRatio:    market.lsRatio ?? null,
+      basisPct:   market.basisAvg ?? null,
+    })
+    recordPattern(fingerprint, market.spot).catch(() => {})
+
+    // Met à jour les outcomes de tous les patterns connus avec le prix actuel
+    getAllPatterns().then(patterns => {
+      patterns.forEach(p => updateOutcomes(p.hash, market.spot).catch(() => {}))
+    }).catch(() => {})
+  }
+
   return result
 }
