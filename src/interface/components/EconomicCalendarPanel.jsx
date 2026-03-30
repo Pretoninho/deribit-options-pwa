@@ -205,7 +205,7 @@ export default function EconomicCalendarPanel() {
                 ? `Mis à jour : ${new Date(lastUpdated).toLocaleTimeString('fr-FR')} · refresh/h`
                 : 'Chargement…'
               }
-              {' · Source : TradingEconomics'}
+              {' · Source : Forex Factory (public)'}
             </div>
           </div>
         )
