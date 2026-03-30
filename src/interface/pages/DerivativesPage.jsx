@@ -264,47 +264,24 @@ export default function DerivativesPage({ asset }) {
         />
       </div>
 
-      {/* ── Funding Perpétuel — 3 exchanges ── */}
-      <SectionTitle>Funding Perpétuel</SectionTitle>
+      {/* ── Funding Perpétuel ── */}
+      <SectionTitle>Funding Perpétuel Deribit</SectionTitle>
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
-        <TableHead cols={['Exchange', 'Taux 8h', 'Ann.', 'Moy.30p']} />
-        {fundingRows.map((row, i) => (
-          <div key={row.name} style={{
-            display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr',
-            alignItems: 'center', gap: 4, padding: '10px 16px',
-            borderBottom: i < fundingRows.length - 1 ? '1px solid rgba(255,255,255,.04)' : 'none',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div style={{ width: 6, height: 6, borderRadius: '50%', background: row.color, flexShrink: 0 }} />
-              <span style={{ fontSize: 11, fontFamily: 'var(--sans)', fontWeight: 700 }}>{row.name}</span>
-            </div>
-            <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: pctColor(row.rate8h) }}>
-              {row.rate8h != null ? fmtPct(row.rate8h, 4) : '—'}
-            </div>
-            <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: pctColor(row.rateAnn) }}>
-              {row.rateAnn != null ? fmtPct(row.rateAnn) : '—'}
-            </div>
-            <div style={{ textAlign: 'right', fontSize: 11, color: pctColor(row.avg) }}>
-              {row.avg != null ? fmtPct(row.avg) : '—'}
-            </div>
+        <TableHead cols={['Taux 8h', 'Ann.', 'Moy.30p']} />
+        <div style={{
+          display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
+          alignItems: 'center', gap: 4, padding: '10px 16px',
+        }}>
+          <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: pctColor(dFunding?.rate8h) }}>
+            {dFunding?.rate8h != null ? fmtPct(dFunding.rate8h, 4) : '—'}
           </div>
-        ))}
-        {/* Prochaine fenêtre Binance */}
-        {fundingCountdown && (
-          <div style={{ padding: '7px 16px', borderTop: '1px solid rgba(255,255,255,.04)', display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Prochain funding Binance</span>
-            <span style={{ fontSize: 11, fontWeight: 700, color: fundingColor }}>{fundingCountdown}</span>
+          <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: pctColor(dFunding?.rateAnn) }}>
+            {dFunding?.rateAnn != null ? fmtPct(dFunding.rateAnn) : '—'}
           </div>
-        )}
-        {/* Spread Deribit − Binance */}
-        {safe(dFunding?.rateAnn) !== null && safe(bFunding?.rateAnn) !== null && (
-          <div style={{ padding: '7px 16px', borderTop: '1px solid rgba(255,255,255,.04)', display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Spread Deribit − Binance</span>
-            <span style={{ fontSize: 11, fontWeight: 700, color: pctColor(dFunding.rateAnn - bFunding.rateAnn) }}>
-              {fmtPct(dFunding.rateAnn - bFunding.rateAnn)}
-            </span>
+          <div style={{ textAlign: 'right', fontSize: 11, color: pctColor(avgFunding30) }}>
+            {avgFunding30 != null ? fmtPct(avgFunding30) : '—'}
           </div>
-        )}
+        </div>
       </div>
 
       {/* ── Structure à terme futures Deribit ── */}
@@ -399,107 +376,6 @@ export default function DerivativesPage({ asset }) {
             : 'Données Deribit non disponibles'}
         </div>
 
-        {/* ── Binance · Perpétuels ── */}
-        <div style={{ fontSize: 10, color: '#F0B90B', fontFamily: 'var(--sans)', fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 10 }}>
-          Binance · Perpétuels
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 10 }}>
-          {[
-            { label: 'Long OI',   value: sentiment?.longPct  != null ? `${fmtNum(sentiment.longPct,  1)}%` : '—', color: 'var(--call)' },
-            { label: 'Short OI',  value: sentiment?.shortPct != null ? `${fmtNum(sentiment.shortPct, 1)}%` : '—', color: 'var(--put)'  },
-            { label: 'L/S Ratio', value: sentiment?.ratio    != null ? fmtNum(sentiment.ratio, 2)        : '—',
-              color: sentiment?.bullish == null ? 'var(--text-muted)' : sentiment.bullish ? 'var(--call)' : 'var(--put)' },
-          ].map(({ label, value, color }) => (
-            <div key={label}>
-              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>{label}</div>
-              <div style={{ fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 13, color }}>{value}</div>
-            </div>
-          ))}
-        </div>
-        {(sentiment?.longPct != null || sentiment?.shortPct != null) && (() => {
-          const lPct = Math.min(95, Math.max(5, sentiment?.longPct  ?? 50))
-          const sPct = Math.min(95, Math.max(5, sentiment?.shortPct ?? 50))
-          return (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ flex: 1, height: 6, background: 'rgba(255,255,255,.06)', borderRadius: 3, overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: `${lPct}%`, background: 'var(--call)', borderRadius: 3 }} />
-                </div>
-                <span style={{ fontSize: 10, color: 'var(--call)', width: 54, textAlign: 'right' }}>Longs {Math.round(lPct)}%</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ flex: 1, height: 6, background: 'rgba(255,255,255,.06)', borderRadius: 3, overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: `${sPct}%`, background: 'var(--put)', borderRadius: 3 }} />
-                </div>
-                <span style={{ fontSize: 10, color: 'var(--put)', width: 54, textAlign: 'right' }}>Shorts {Math.round(sPct)}%</span>
-              </div>
-            </div>
-          )
-        })()}
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 16 }}>
-          {sentiment?.ratio != null
-            ? sentiment.ratio > 1.5
-              ? 'Retail massivement long → Risque de squeeze'
-              : sentiment.ratio < 0.7
-              ? 'Retail massivement short → Potentiel short squeeze'
-              : 'Positionnement retail neutre'
-            : 'Données Binance non disponibles'}
-        </div>
-
-        {/* ── Signal Combiné ── */}
-        {(() => {
-          const lsR  = sentiment?.ratio ?? null
-          const pcR  = dOI?.putCallRatio ?? null
-          if (lsR == null && pcR == null) return null
-          const s6   = calcPositioningScore(lsR, pcR)
-          const pos  = interpretPositioning(lsR, pcR, s6)
-          if (!pos) return null
-
-          const bgColor     = pos.signal === 'bearish' ? 'rgba(240,71,107,.08)'   : pos.signal === 'bullish' ? 'rgba(0,200,150,.08)' : 'rgba(255,255,255,.03)'
-          const borderColor = pos.signal === 'bearish' ? 'rgba(240,71,107,.25)'   : pos.signal === 'bullish' ? 'rgba(0,200,150,.25)' : 'var(--border)'
-          const icon        = pos.strength === 'strong' ? '⚠' : pos.divergenceType?.startsWith('consensus') ? '✓' : '~'
-          const strengthFr  = { strong: 'Forte', moderate: 'Modérée', weak: 'Faible' }[pos.strength] ?? '—'
-
-          return (
-            <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--sans)', fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 8 }}>
-              Signal combiné
-              <div style={{ background: bgColor, border: `1px solid ${borderColor}`, borderRadius: 10, padding: '12px 14px', marginTop: 8 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                  <div style={{ fontFamily: 'var(--sans)', fontWeight: 800, fontSize: 13, color: 'var(--text)', textTransform: 'none' }}>
-                    {icon} {pos.divergenceType === 'retail_bullish_instit_bearish' ? 'Divergence détectée'
-                      : pos.divergenceType === 'retail_bearish_instit_bullish' ? 'Divergence détectée'
-                      : pos.divergenceType === 'consensus_bullish' ? 'Consensus haussier'
-                      : pos.divergenceType === 'consensus_bearish' ? 'Consensus baissier'
-                      : 'Neutre'}
-                  </div>
-                  <span style={{ fontSize: 10, fontFamily: 'var(--sans)', fontWeight: 700, textTransform: 'none', color: 'var(--text-muted)' }}>
-                    Intensité : {strengthFr}
-                  </span>
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'none', fontWeight: 400 }}>
-                  Retail{' '}
-                  <span style={{ color: pos.retailLabel.color === 'put' ? 'var(--put)' : pos.retailLabel.color === 'call' ? 'var(--call)' : 'var(--text-muted)', fontWeight: 700 }}>
-                    {pos.retailLabel.label}
-                  </span>
-                  {' · '}Instit.{' '}
-                  <span style={{ color: pos.institutLabel.color === 'put' ? 'var(--put)' : pos.institutLabel.color === 'call' ? 'var(--call)' : 'var(--text-muted)', fontWeight: 700 }}>
-                    {pos.institutLabel.label}
-                  </span>
-                  {' · '}Signal contrarian{' '}
-                  <span style={{ fontWeight: 700, color: pos.signal === 'bearish' ? 'var(--put)' : pos.signal === 'bullish' ? 'var(--call)' : 'var(--text-muted)' }}>
-                    {pos.signal === 'bearish' ? 'baissier' : pos.signal === 'bullish' ? 'haussier' : 'neutre'}
-                  </span>
-                </div>
-                {pos.expertAction && (
-                  <div style={{ fontSize: 11, color: 'var(--text-dim)', lineHeight: 1.6, textTransform: 'none', fontWeight: 400, borderTop: `1px solid ${borderColor}`, paddingTop: 8 }}>
-                    <span style={{ fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', fontSize: 9, letterSpacing: '0.5px' }}>Action : </span>
-                    {pos.expertAction}
-                  </div>
-                )}
-              </div>
-            </div>
-          )
-        })()}
       </div>
 
       {/* ── Sentiment Binance ── */}
