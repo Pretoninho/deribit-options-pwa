@@ -14,17 +14,21 @@ import TrackerPage    from './pages/TrackerPage.jsx'
 import CalibrationPage from './pages/CalibrationPage.jsx'
 import FingerprintDebug from './pages/FingerprintDebug.jsx'
 import MonitorPage      from './pages/MonitorPage.jsx'
+import AnalyticsPage    from './pages/AnalyticsPage.jsx'
 import ClockStatus    from './components/ClockStatus.jsx'
 import AuditBanner    from './components/AuditBanner.jsx'
 import NavDrawer      from './components/NavDrawer.jsx'
 import VLogo          from './components/VLogo.jsx'
-import { getSignalHistory } from '../signals/signal_engine.js'
+import { getSignalHistory, hashAllSectors } from '../signals/signal_engine.js'
 import { setupSettlementWatcher } from '../signals/settlement_tracker.js'
 import { syncServerClocks, SYNC_INTERVAL_MS } from '../data/providers/clock_sync.js'
 import { setCachedClockSync, dataStore, CacheKey } from '../data/data_store/cache.js'
-import { checkNotifications, notifyAnomaly } from '../signals/notification_engine.js'
+import { checkNotifications, notifyAnomaly, notifySectorChange } from '../signals/notification_engine.js'
 import { requestPermission } from '../signals/notification_manager.js'
 import { runInitialImport } from '../signals/snapshot_importer.js'
+import { SectorSignalTracker } from '../signals/sector_signal_tracker.js'
+import { PatternSessionManager } from '../signals/pattern_session_manager.js'
+import { PatternClusterer } from '../signals/pattern_clustering.js'
 import NotificationSettingsPage from './pages/NotificationSettingsPage.jsx'
 import MaintenancePage          from './pages/MaintenancePage.jsx'
 import './App.css'
@@ -49,6 +53,7 @@ const PAGE_NAMES = {
   assistant:     'Assistant',
   onchain:       'On-Chain',
   audit:         'Audit',
+  analytics:     'Analytics',
   notifications: 'Notifications',
   calibration:   'Calibration',
   fingerprint:   'Fingerprint Debug',
@@ -91,6 +96,20 @@ export default function App() {
   const [signalScore, setSignalScore] = useState(null)
   const [auditAlerts, setAuditAlerts] = useState(0)
   const [nextFunding, setNextFunding] = useState(() => getNextFundingCountdown())
+
+  // Initialize sector signal trackers, pattern session managers, and pattern clusterers
+  const trackersRef = window.__veridexTrackers = window.__veridexTrackers || {
+    BTC: {
+      sectorTracker: new SectorSignalTracker('BTC'),
+      sessionManager: new PatternSessionManager('BTC'),
+      clusterer: new PatternClusterer('BTC')
+    },
+    ETH: {
+      sectorTracker: new SectorSignalTracker('ETH'),
+      sessionManager: new PatternSessionManager('ETH'),
+      clusterer: new PatternClusterer('ETH')
+    }
+  }
 
   // Synchronisation horloges
   useEffect(() => {
@@ -156,12 +175,54 @@ export default function App() {
             : null
           const fundingAnn = funding?.rateAnn ?? funding?.avgAnn7d ?? null
 
+          // UPDATE: Integrate sector signal tracking
+          const trackers = trackersRef[asset]
+          if (trackers) {
+            // Hash Futures sector
+            if (funding) {
+              const futuresChange = trackers.sectorTracker.updateSector('futures', {
+                funding,
+              })
+              if (futuresChange.changed) {
+                await notifySectorChange(
+                  asset,
+                  'futures',
+                  futuresChange.changedFields,
+                  futuresChange.prevHash,
+                  futuresChange.hash
+                )
+              }
+            }
+
+            // Hash Options sector
+            if (dvol) {
+              const optionsChange = trackers.sectorTracker.updateSector('options', {
+                dvol,
+              })
+              if (optionsChange.changed) {
+                await notifySectorChange(
+                  asset,
+                  'options',
+                  optionsChange.changedFields,
+                  optionsChange.prevHash,
+                  optionsChange.hash
+                )
+              }
+            }
+
+            // Update pattern session tracking
+            const marketData = { price: spot, iv: ivRank, funding: fundingAnn }
+            trackers.sessionManager.tick(Date.now(), marketData)
+          }
+
           await checkNotifications(asset, {
             spotPrice:  spot,
             ivRank,
             fundingAnn,
           })
-        } catch (_) {}
+        } catch (err) {
+          console.error(`[App] Error in notification check for ${asset}:`, err)
+        }
       }
     }
 
@@ -235,6 +296,7 @@ export default function App() {
         {tab === 'assistant'     && <AssistantPage          asset={asset} />}
         {tab === 'onchain'       && <OnChainPage            asset={asset} />}
         {tab === 'audit'         && <AuditPage />}
+        {tab === 'analytics'     && <AnalyticsPage         asset={asset} clockSync={clockSync} />}
         {tab === 'notifications' && <NotificationSettingsPage />}
         {tab === 'calibration'   && <CalibrationPage />}
         {tab === 'fingerprint'   && <FingerprintDebug />}

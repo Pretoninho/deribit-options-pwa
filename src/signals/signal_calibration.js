@@ -69,17 +69,13 @@ export const DEFAULT_CALIBRATION = {
   move_big:         3.0,
   spread_tight_max: FINGERPRINT_BUCKETING.spread.tight,   // 0.1
   spread_wide_min:  FINGERPRINT_BUCKETING.spread.wide,    // 0.5
-  ls_short_max:     FINGERPRINT_BUCKETING.lsRatio.shortHeavy, // 0.8
-  ls_long_min:      FINGERPRINT_BUCKETING.lsRatio.longHeavy,  // 1.2
+  // v2.0: ls_short_max and ls_long_min removed (Binance L/S ratio deprecated)
   basis_back_max:   FINGERPRINT_BUCKETING.basis.backwardation, // -2
   basis_flat_max:   FINGERPRINT_BUCKETING.basis.contango,      // 2
   basis_high_min:   FINGERPRINT_BUCKETING.basis.highContango,  // 10
 
-  // --- Positioning – L/S Ratio ---
-  ls_bullish:       POSITIONING.lsRatio.bullish,       // 1.2
-  ls_bearish:       POSITIONING.lsRatio.bearish,       // 0.8
-  ls_strong_bull:   POSITIONING.lsRatio.strongBullish, // 1.5
-  ls_strong_bear:   POSITIONING.lsRatio.strongBearish, // 0.7
+  // v2.0: Positioning – L/S Ratio removed (Binance deprecated)
+  // Kept only P/C Ratio (Deribit-only)
 
   // --- Positioning – P/C Ratio ---
   pc_bullish:       POSITIONING.pcRatio.bullish,       // 0.85
@@ -107,6 +103,27 @@ export const DEFAULT_CALIBRATION = {
   onchain_favorable: ONCHAIN_SIGNALS.scoreInterpretation.favorable, // 70
   onchain_neutral:   ONCHAIN_SIGNALS.scoreInterpretation.neutral,   // 50
   onchain_weak:      ONCHAIN_SIGNALS.scoreInterpretation.weak,      // 35
+
+  // --- Pondération des composantes — scénario complet (s1–s6) ---
+  w_complete_s1_iv:           0.30,
+  w_complete_s2_funding:      0.20,
+  w_complete_s3_basis:        0.20,
+  w_complete_s4_ivVsRv:       0.15,
+  w_complete_s5_onChain:      0.10,
+  w_complete_s6_positioning:  0.15,
+
+  // --- Pondération — scénario sans positionnement (s1–s5) ---
+  w_nopos_s1_iv:              0.30,
+  w_nopos_s2_funding:         0.20,
+  w_nopos_s3_basis:           0.20,
+  w_nopos_s4_ivVsRv:          0.15,
+  w_nopos_s5_onChain:         0.15,
+
+  // --- Pondération — scénario minimal (s1–s4) ---
+  w_min_s1_iv:                0.35,
+  w_min_s2_funding:           0.25,
+  w_min_s3_basis:             0.25,
+  w_min_s4_ivVsRv:            0.15,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -201,4 +218,82 @@ export function updateCalibration(key, value) {
 export function resetCalibration() {
   localStorage.removeItem(STORAGE_KEY)
   return { ...DEFAULT_CALIBRATION }
+}
+
+// ── Templates utilisateur ─────────────────────────────────────────────────────
+
+const TEMPLATES_KEY = 'veridex_calibration_templates'
+export const MAX_TEMPLATES = 6
+
+/**
+ * Retourne le tableau des templates (MAX_TEMPLATES slots, null si vide).
+ * @returns {Array<{ name: string, savedAt: number, params: Record<string, number> } | null>}
+ */
+export function getTemplates() {
+  try {
+    const raw = localStorage.getItem(TEMPLATES_KEY)
+    const arr = raw ? JSON.parse(raw) : []
+    const result = Array(MAX_TEMPLATES).fill(null)
+    arr.forEach((t, i) => { if (i < MAX_TEMPLATES) result[i] = t })
+    return result
+  } catch (_) {
+    return Array(MAX_TEMPLATES).fill(null)
+  }
+}
+
+/**
+ * Enregistre la configuration courante dans un slot template.
+ * @param {number} slot — indice 0..MAX_TEMPLATES-1
+ * @param {string} name — nom du template
+ * @returns {Array} tableau des templates mis à jour
+ */
+export function saveTemplate(slot, name) {
+  if (slot < 0 || slot >= MAX_TEMPLATES) return getTemplates()
+  const templates = getTemplates()
+  templates[slot] = {
+    name: (name || `Template ${slot + 1}`).trim(),
+    savedAt: Date.now(),
+    params: { ..._load() },
+  }
+  localStorage.setItem(TEMPLATES_KEY, JSON.stringify(templates))
+  return templates
+}
+
+/**
+ * Charge un template et l'applique comme configuration courante.
+ * @param {number} slot
+ * @returns {Record<string, number> | null} nouvelle configuration complète, ou null si slot vide
+ */
+export function loadTemplate(slot) {
+  const templates = getTemplates()
+  const tpl = templates[slot]
+  if (!tpl) return null
+  _save(tpl.params)
+  return _load()
+}
+
+/**
+ * Supprime un template.
+ * @param {number} slot
+ * @returns {Array} tableau mis à jour
+ */
+export function deleteTemplate(slot) {
+  const templates = getTemplates()
+  templates[slot] = null
+  localStorage.setItem(TEMPLATES_KEY, JSON.stringify(templates))
+  return templates
+}
+
+/**
+ * Renomme un template existant.
+ * @param {number} slot
+ * @param {string} name
+ * @returns {Array} tableau mis à jour
+ */
+export function renameTemplate(slot, name) {
+  const templates = getTemplates()
+  if (!templates[slot]) return templates
+  templates[slot] = { ...templates[slot], name: (name || templates[slot].name).trim() }
+  localStorage.setItem(TEMPLATES_KEY, JSON.stringify(templates))
+  return templates
 }

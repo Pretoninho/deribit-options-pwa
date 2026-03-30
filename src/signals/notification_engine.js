@@ -26,8 +26,6 @@ import { TIMING }                          from '../config/signal_calibration.js
 const _state = {
   priceHistory:   { BTC: [], ETH: [] },
   fundingHistory: { BTC: [], ETH: [] },
-  liqAccumulator: { BTC: 0,  ETH: 0  },
-  liqWindowStart: Date.now(),
   lastIVRank:     { BTC: null, ETH: null },
   ivSpikeStart:   { BTC: null, ETH: null },
   lastSignalCat:  { BTC: null, ETH: null },
@@ -47,7 +45,6 @@ const _state = {
  *   spotPrice?:       number|null,
  *   ivRank?:          number|null,
  *   fundingAnn?:      number|null,
- *   liquidationsUSD?: number|null,
  *   signal?:          object|null,
  *   score?:           number|null,
  *   instruments?:     object[],
@@ -60,7 +57,6 @@ export async function checkNotifications(asset, data) {
     _checkPriceMove(asset, data.spotPrice, t),
     _checkIVSpike(asset, data.ivRank, t),
     _checkFundingChange(asset, data.fundingAnn, t),
-    _checkLiquidations(asset, data.liquidationsUSD, t),
     _checkSignalChange(asset, data.signal, data.score, t),
     _checkExpiry(asset, data.instruments, t),
     _checkFundingFixing(t),
@@ -92,6 +88,51 @@ export async function notifyAnomaly(asset, anomalyResult) {
       (count > 3 ? ` +${count - 3}` : ''),
     tag:  `anomaly_${asset}`,
     data: { page: 'signals', asset },
+  })
+}
+
+// ── Sector-Specific Alerts (export public — called by SectorSignalTracker) ─────
+
+/**
+ * Notifies a sector-specific signal change detected by SectorSignalTracker
+ * Provides more granular alerts than global signal changes
+ *
+ * @param {string} asset - Asset name
+ * @param {string} sector - Sector type: 'futures', 'options', 'onchain'
+ * @param {Array<string>} changedFields - Fields that changed
+ * @param {string} prevHash - Previous hash (first 8 chars for display)
+ * @param {string} currHash - Current hash (first 8 chars for display)
+ * @param {Object} snapshot - Current data snapshot
+ */
+export async function notifySectorChange(asset, sector, changedFields, prevHash, currHash, snapshot = {}) {
+  if (!changedFields || changedFields.length === 0) return
+
+  const sectorLabel = sector.charAt(0).toUpperCase() + sector.slice(1)
+  const fieldStr = changedFields.slice(0, 3).join(', ')
+  const hashStr = `${prevHash?.slice(0, 4) || '...'}... → ${currHash?.slice(0, 4) || '...'}...`
+
+  // Determine priority based on sector and fields
+  let level = 'info'
+  if (sector === 'futures' && (changedFields.includes('funding') || changedFields.includes('basis'))) {
+    level = 'alert'
+  } else if (sector === 'options' && changedFields.includes('dvol')) {
+    level = 'alert'
+  }
+
+  await sendNotification({
+    type: 'sector_change',
+    asset,
+    sector,
+    level,
+    title: `◈ [${sectorLabel}] Signal change · ${asset}`,
+    body: `${fieldStr}${changedFields.length > 3 ? ` +${changedFields.length - 3}` : ''} (${hashStr})`,
+    tag: `sector_${sector}_${asset}`,
+    data: {
+      page: sector === 'futures' ? 'derivatives' : sector === 'options' ? 'options' : 'analysis',
+      asset,
+      sector,
+      changedFields
+    },
   })
 }
 
@@ -129,38 +170,6 @@ async function _checkPriceMove(asset, price, t) {
         `Il y a 1h : $${oldest.price.toLocaleString('en-US')}`,
       tag:  `price_move_${asset}`,
       data: { page: 'market', asset },
-    })
-  }
-}
-
-// ── N3 — Liquidations massives ────────────────────────────────────────────────
-
-async function _checkLiquidations(asset, liqUSD, t) {
-  if (!liqUSD) return
-
-  const now = Date.now()
-
-  // Reset la fenêtre si > 1h
-  if (now - _state.liqWindowStart > TIMING.LIQUIDATION_WINDOW_MS) {
-    _state.liqAccumulator.BTC = 0
-    _state.liqAccumulator.ETH = 0
-    _state.liqWindowStart = now
-  }
-
-  _state.liqAccumulator[asset] += liqUSD
-
-  if (_state.liqAccumulator[asset] >= t.liquidations_usd) {
-    const total = _state.liqAccumulator[asset]
-    _state.liqAccumulator[asset] = 0  // reset après alerte
-
-    await sendNotification({
-      type:  'liquidations',
-      asset,
-      level: 'critical',
-      title: `◈ Liquidations massives · ${asset}`,
-      body:  `$${(total / 1_000_000).toFixed(0)}M liquidés en 1h sur Binance`,
-      tag:   `liquidations_${asset}`,
-      data:  { page: 'derivatives', asset },
     })
   }
 }
@@ -423,7 +432,7 @@ async function _checkFundingFixing(t) {
           asset: 'ALL',
           level: 'info',
           title: `◈ Funding fixing dans ${diff}min`,
-          body:  `Prochain fixing Binance à ${fixingHour}:00 UTC`,
+          body:  `Prochain fixing Deribit à ${fixingHour}:00 UTC`,
           tag:   'funding_fixing',
           data:  { page: 'derivatives' },
         })

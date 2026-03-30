@@ -26,6 +26,7 @@ import { calculateMaxPainByExpiry, interpretMaxPain } from '../core/volatility/m
 import { calcPositioningScore, interpretPositioning } from './positioning_score.js'
 import { TIMING, STORAGE_LIMITS, getComponentWeights } from '../config/signal_calibration.js'
 import { getCalibration } from './signal_calibration.js'
+import { hashSector } from '../utils/sector_hasher.js'
 
 // ── Filtre DVOL ───────────────────────────────────────────────────────────────
 
@@ -148,7 +149,8 @@ export function scoreIVvsRV(dvol, rv) {
 export function calcGlobalScore(s1, s2, s3, s4, s5, s6) {
   const hasS5 = s5 != null
   const hasS6 = s6 != null
-  const { w1, w2, w3, w4, w5, w6 } = getComponentWeights(hasS5, hasS6)
+  const cal = getCalibration()
+  const { w1, w2, w3, w4, w5, w6 } = getComponentWeights(hasS5, hasS6, cal)
 
   let total = 0, weights = 0
   if (s1 != null) { total += s1 * w1; weights += w1 }
@@ -282,6 +284,44 @@ export function computeSignal({ dvol, funding, rv, basisAvg, onChainScore, spot,
     maxPain:    maxPainResult,
     positioning,
   }
+}
+
+// ── Sector-specific hashing helpers ────────────────────────────────────────────
+
+/**
+ * Compute hashes for all sectors based on current market data
+ * Used by SectorSignalTracker to detect changes per sector
+ *
+ * @param {{dvol, funding, rv, basisAvg, onChainScore, spot}} data
+ * @returns {{futures: {hash, sector, size}, options: {hash, sector, size}, onchain: {hash, sector, size}}}
+ */
+export function hashAllSectors(data) {
+  const result = {}
+
+  // Hash Futures sector (Funding, Basis)
+  if (data.funding || data.basisAvg) {
+    result.futures = hashSector({
+      funding: data.funding,
+      basis: data.basisAvg
+    }, 'futures')
+  }
+
+  // Hash Options sector (DVOL, IV/RV premium)
+  if (data.dvol || data.rv) {
+    result.options = hashSector({
+      dvol: data.dvol,
+      rv: data.rv
+    }, 'options')
+  }
+
+  // Hash On-Chain sector
+  if (data.onChainScore !== undefined) {
+    result.onchain = hashSector({
+      onChainScore: data.onChainScore
+    }, 'onchain')
+  }
+
+  return result
 }
 
 // ── Persistance des anomalies ─────────────────────────────────────────────────

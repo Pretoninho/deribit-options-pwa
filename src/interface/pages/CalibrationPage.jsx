@@ -23,6 +23,12 @@ import {
   updateCalibration,
   resetCalibration,
   DEFAULT_CALIBRATION,
+  getTemplates,
+  saveTemplate,
+  loadTemplate,
+  deleteTemplate,
+  renameTemplate,
+  MAX_TEMPLATES,
 } from '../../signals/signal_calibration.js'
 
 // ── SectionCard ───────────────────────────────────────────────────────────────
@@ -97,11 +103,273 @@ function ParamRow({ label, paramKey, value, defaultValue, unit, step, min, max, 
   )
 }
 
+// ── TemplateSlot ──────────────────────────────────────────────────────────────
+
+function TemplateSlot({ index, template, onSave, onLoad, onDelete, onRename }) {
+  const [mode, setMode]     = useState('idle')   // 'idle' | 'saving' | 'renaming'
+  const [inputVal, setInputVal] = useState('')
+
+  const fmt = (ts) => new Date(ts).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+
+  const startSave = () => { setMode('saving'); setInputVal(`Template ${index + 1}`) }
+  const confirmSave = () => { onSave(index, inputVal); setMode('idle') }
+  const startRename = () => { setMode('renaming'); setInputVal(template.name) }
+  const confirmRename = () => { onRename(index, inputVal); setMode('idle') }
+  const cancel = () => setMode('idle')
+
+  const inputStyle = {
+    flex: 1, background: 'rgba(255,255,255,.07)', border: '1px solid var(--accent)',
+    borderRadius: 6, color: 'var(--text)', fontFamily: 'var(--sans)',
+    fontSize: 11, fontWeight: 600, padding: '4px 8px', outline: 'none',
+  }
+  const btnBase = {
+    border: 'none', borderRadius: 6, cursor: 'pointer',
+    fontFamily: 'var(--sans)', fontWeight: 700, fontSize: 10, padding: '4px 8px',
+  }
+
+  if (!template) {
+    // Slot vide
+    return (
+      <div style={{
+        border: '1px dashed rgba(255,255,255,.12)', borderRadius: 10,
+        padding: '12px 12px', display: 'flex', flexDirection: 'column', gap: 8,
+        minHeight: 80, justifyContent: 'center',
+      }}>
+        <div style={{ fontSize: 10, color: 'rgba(255,255,255,.25)', fontFamily: 'var(--sans)', fontWeight: 700, textAlign: 'center' }}>
+          Slot {index + 1}
+        </div>
+        {mode === 'saving' ? (
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              autoFocus
+              value={inputVal}
+              onChange={e => setInputVal(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') confirmSave(); if (e.key === 'Escape') cancel() }}
+              placeholder="Nom du template"
+              style={inputStyle}
+            />
+            <button onClick={confirmSave} style={{ ...btnBase, background: 'rgba(0,229,160,.15)', color: 'var(--call)' }}>✓</button>
+            <button onClick={cancel}      style={{ ...btnBase, background: 'rgba(255,255,255,.06)', color: 'var(--text-muted)' }}>✕</button>
+          </div>
+        ) : (
+          <button
+            onClick={startSave}
+            style={{
+              ...btnBase, width: '100%',
+              background: 'rgba(255,255,255,.05)', color: 'var(--text-muted)',
+              border: '1px solid rgba(255,255,255,.1)',
+              padding: '6px 0', fontSize: 11,
+            }}
+          >
+            + Enregistrer
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  // Slot rempli
+  return (
+    <div style={{
+      border: '1px solid var(--border)', borderRadius: 10,
+      padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8,
+      background: 'rgba(255,255,255,.02)',
+    }}>
+      {mode === 'renaming' ? (
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input
+            autoFocus
+            value={inputVal}
+            onChange={e => setInputVal(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') confirmRename(); if (e.key === 'Escape') cancel() }}
+            style={inputStyle}
+          />
+          <button onClick={confirmRename} style={{ ...btnBase, background: 'rgba(0,229,160,.15)', color: 'var(--call)' }}>✓</button>
+          <button onClick={cancel}        style={{ ...btnBase, background: 'rgba(255,255,255,.06)', color: 'var(--text-muted)' }}>✕</button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span
+            onClick={startRename}
+            title="Cliquer pour renommer"
+            style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', flex: 1, cursor: 'text', lineHeight: 1.3 }}
+          >
+            {template.name}
+          </span>
+          <button onClick={() => onDelete(index)} title="Supprimer" style={{ ...btnBase, background: 'none', color: 'rgba(255,77,109,.5)', fontSize: 12, padding: '2px 4px' }}>✕</button>
+        </div>
+      )}
+      <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--sans)' }}>
+        {fmt(template.savedAt)}
+      </div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button
+          onClick={() => onLoad(index)}
+          style={{ ...btnBase, flex: 1, background: 'rgba(255,215,0,.08)', color: 'var(--atm)', border: '1px solid rgba(255,215,0,.2)' }}
+        >
+          Charger
+        </button>
+        <button
+          onClick={() => onSave(index, template.name)}
+          title="Écraser avec la config courante"
+          style={{ ...btnBase, background: 'rgba(255,255,255,.05)', color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,.1)' }}
+        >
+          ↑ Maj
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── WeightRow ─────────────────────────────────────────────────────────────────
+
+function WeightRow({ label, paramKey, value, defaultValue, last, onChange, onReset }) {
+  const isDirty = value !== defaultValue
+  const pct = Math.round(value * 100)
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      paddingBottom: last ? 0 : 12, marginBottom: last ? 0 : 12,
+      borderBottom: last ? 'none' : '1px solid rgba(255,255,255,.04)',
+      gap: 8,
+    }}>
+      <span style={{ fontSize: 12, color: isDirty ? 'var(--text)' : 'var(--text-muted)', flex: 1, lineHeight: 1.4 }}>
+        {label}
+        {isDirty && <span style={{ fontSize: 9, color: 'var(--atm)', marginLeft: 5 }}>●</span>}
+      </span>
+      <input
+        type="range"
+        min={0} max={100} step={1}
+        value={pct}
+        onChange={e => onChange(paramKey, parseFloat(e.target.value) / 100)}
+        style={{ width: 90, accentColor: isDirty ? 'var(--atm)' : 'var(--accent)' }}
+      />
+      <span style={{
+        fontFamily: 'var(--sans)', fontWeight: 700, fontSize: 12,
+        color: isDirty ? 'var(--atm)' : 'var(--text)',
+        minWidth: 38, textAlign: 'right',
+      }}>
+        {pct}%
+      </span>
+      <button
+        onClick={() => onReset(paramKey, defaultValue)}
+        title="Réinitialiser"
+        style={{
+          background: 'none', border: '1px solid var(--border)',
+          borderRadius: 6, color: 'var(--text-muted)',
+          fontSize: 10, padding: '4px 8px', cursor: 'pointer',
+          fontFamily: 'var(--sans)', fontWeight: 700,
+        }}
+      >
+        Reset
+      </button>
+    </div>
+  )
+}
+
+// ── WeightScenarioSection ─────────────────────────────────────────────────────
+
+function WeightScenarioSection({ title, keys, labels, cfg, defaults, onChange, onReset, onNormalize }) {
+  const total = keys.reduce((sum, k) => sum + (cfg[k] ?? defaults[k]), 0)
+  const totalPct = Math.round(total * 100)
+  const isValid = totalPct === 100
+  return (
+    <div>
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        marginBottom: 12,
+      }}>
+        {title && (
+          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--sans)', fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+            {title}
+          </span>
+        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+          <span style={{
+            fontFamily: 'var(--sans)', fontWeight: 700, fontSize: 12,
+            color: isValid ? 'var(--call)' : 'var(--put)',
+          }}>
+            Total : {totalPct}%
+          </span>
+          {!isValid && (
+            <button
+              onClick={() => onNormalize(keys)}
+              style={{
+                background: 'rgba(255,215,0,.08)', border: '1px solid rgba(255,215,0,.3)',
+                borderRadius: 6, color: 'var(--atm)',
+                fontSize: 10, padding: '3px 8px', cursor: 'pointer',
+                fontFamily: 'var(--sans)', fontWeight: 700,
+              }}
+            >
+              Normaliser
+            </button>
+          )}
+        </div>
+      </div>
+      {keys.map((k, i) => (
+        <WeightRow
+          key={k}
+          label={labels[i]}
+          paramKey={k}
+          value={cfg[k] ?? defaults[k]}
+          defaultValue={defaults[k]}
+          last={i === keys.length - 1}
+          onChange={onChange}
+          onReset={onReset}
+        />
+      ))}
+    </div>
+  )
+}
+
+// ── CollapsibleScenario ───────────────────────────────────────────────────────
+
+function CollapsibleScenario({ title, children }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div style={{ borderTop: '1px solid rgba(255,255,255,.04)', paddingTop: 10, marginTop: 4 }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          width: '100%', background: 'none', border: 'none', cursor: 'pointer',
+          color: 'var(--text-muted)', fontFamily: 'var(--sans)', fontWeight: 700,
+          fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.5px',
+          padding: '4px 0', marginBottom: open ? 12 : 0,
+        }}
+      >
+        <span>{title}</span>
+        <span style={{ fontSize: 12 }}>{open ? '▲' : '▼'}</span>
+      </button>
+      {open && children}
+    </div>
+  )
+}
+
 // ── Page principale ───────────────────────────────────────────────────────────
 
 export default function CalibrationPage() {
-  const [cfg, setCfg]         = useState(() => getCalibration())
+  const [cfg, setCfg]             = useState(() => getCalibration())
   const [resetDone, setResetDone] = useState(false)
+  const [templates, setTemplates] = useState(() => getTemplates())
+  const [loadedSlot, setLoadedSlot] = useState(null)
+
+  const handleSaveTemplate = (slot, name) => {
+    setTemplates(saveTemplate(slot, name))
+  }
+
+  const handleLoadTemplate = (slot) => {
+    const loaded = loadTemplate(slot)
+    if (loaded) { setCfg(loaded); setLoadedSlot(slot); setTimeout(() => setLoadedSlot(null), 2000) }
+  }
+
+  const handleDeleteTemplate = (slot) => {
+    setTemplates(deleteTemplate(slot))
+  }
+
+  const handleRenameTemplate = (slot, name) => {
+    setTemplates(renameTemplate(slot, name))
+  }
 
   const handleChange = (key, value) => {
     if (isNaN(value)) return
@@ -119,6 +387,21 @@ export default function CalibrationPage() {
     setCfg(reset)
     setResetDone(true)
     setTimeout(() => setResetDone(false), 2000)
+  }
+
+  const handleNormalize = (keys) => {
+    const raw = keys.map(k => cfg[k] ?? DEFAULT_CALIBRATION[k])
+    const sum = raw.reduce((a, b) => a + b, 0)
+    if (sum === 0) return
+    const scaled = raw.map(v => Math.round((v / sum) * 100) / 100)
+    const residual = Math.round((1 - scaled.reduce((a, b) => a + b, 0)) * 100) / 100
+    scaled[0] = Math.round((scaled[0] + residual) * 100) / 100
+    let current = { ...cfg }
+    keys.forEach((k, i) => {
+      current = { ...current, [k]: scaled[i] }
+      updateCalibration(k, scaled[i])
+    })
+    setCfg(current)
   }
 
   const p = (key, label, unit, step, min, max, last = false) => (
@@ -161,6 +444,36 @@ export default function CalibrationPage() {
           ? `⚙ ${dirtyCount} paramètre${dirtyCount > 1 ? 's' : ''} modifié${dirtyCount > 1 ? 's' : ''} — les scores et patterns utilisent ces valeurs en temps réel.`
           : 'Ajustez les seuils de détection des signaux, du score composite et des patterns.'}
       </div>
+
+      {/* Templates */}
+      <SectionCard title="Templates de configuration">
+        {loadedSlot !== null && (
+          <div style={{
+            padding: '7px 10px', borderRadius: 8, marginBottom: 12,
+            background: 'rgba(0,229,160,.08)', border: '1px solid rgba(0,229,160,.25)',
+            fontSize: 11, color: 'var(--call)', fontFamily: 'var(--sans)', fontWeight: 700,
+          }}>
+            ✓ Template « {templates[loadedSlot]?.name} » chargé
+          </div>
+        )}
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: 10,
+        }}>
+          {Array.from({ length: MAX_TEMPLATES }, (_, i) => (
+            <TemplateSlot
+              key={i}
+              index={i}
+              template={templates[i]}
+              onSave={handleSaveTemplate}
+              onLoad={handleLoadTemplate}
+              onDelete={handleDeleteTemplate}
+              onRename={handleRenameTemplate}
+            />
+          ))}
+        </div>
+      </SectionCard>
 
       {/* 1. Filtre DVOL */}
       <SectionCard title="Filtre DVOL — qualité de signal">
@@ -262,6 +575,93 @@ export default function CalibrationPage() {
         {p('onchain_favorable','Score on-chain ≥ → favorable',        '', 1, 50, 100)}
         {p('onchain_neutral',  'Score on-chain ≥ → neutre',           '', 1, 30, 80)}
         {p('onchain_weak',     'Score on-chain ≤ → faible',           '', 1, 0,  60, true)}
+      </SectionCard>
+
+      {/* 12. Pondération des composantes */}
+      <SectionCard title="Pondération des composantes (score composite)">
+
+        <WeightScenarioSection
+          title="Scénario complet — s1 à s6"
+          keys={[
+            'w_complete_s1_iv',
+            'w_complete_s2_funding',
+            'w_complete_s3_basis',
+            'w_complete_s4_ivVsRv',
+            'w_complete_s5_onChain',
+            'w_complete_s6_positioning',
+          ]}
+          labels={[
+            'Rang IV (DVOL vs moy. 30j)',
+            'Taux de Financement',
+            'Basis Futures',
+            'Prime IV / Volatilité Réalisée',
+            'On-Chain (Fear & Greed, Hash Rate)',
+            'Positionnement (L/S + P/C)',
+          ]}
+          cfg={cfg}
+          defaults={DEFAULT_CALIBRATION}
+          onChange={handleChange}
+          onReset={handleReset}
+          onNormalize={handleNormalize}
+        />
+
+        <CollapsibleScenario title="Sans positionnement — s1 à s5">
+          <WeightScenarioSection
+            title=""
+            keys={[
+              'w_nopos_s1_iv',
+              'w_nopos_s2_funding',
+              'w_nopos_s3_basis',
+              'w_nopos_s4_ivVsRv',
+              'w_nopos_s5_onChain',
+            ]}
+            labels={[
+              'Rang IV',
+              'Taux de Financement',
+              'Basis Futures',
+              'Prime IV / Volatilité Réalisée',
+              'On-Chain',
+            ]}
+            cfg={cfg}
+            defaults={DEFAULT_CALIBRATION}
+            onChange={handleChange}
+            onReset={handleReset}
+            onNormalize={handleNormalize}
+          />
+        </CollapsibleScenario>
+
+        <CollapsibleScenario title="Minimal — s1 à s4 uniquement">
+          <WeightScenarioSection
+            title=""
+            keys={[
+              'w_min_s1_iv',
+              'w_min_s2_funding',
+              'w_min_s3_basis',
+              'w_min_s4_ivVsRv',
+            ]}
+            labels={[
+              'Rang IV',
+              'Taux de Financement',
+              'Basis Futures',
+              'Prime IV / Volatilité Réalisée',
+            ]}
+            cfg={cfg}
+            defaults={DEFAULT_CALIBRATION}
+            onChange={handleChange}
+            onReset={handleReset}
+            onNormalize={handleNormalize}
+          />
+        </CollapsibleScenario>
+
+        <div style={{
+          marginTop: 14, padding: '8px 10px', borderRadius: 8,
+          background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.06)',
+          fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.6,
+        }}>
+          Le scénario actif est sélectionné automatiquement selon la disponibilité des données
+          (on-chain et positionnement). Les trois scénarios peuvent être calibrés indépendamment.
+        </div>
+
       </SectionCard>
 
       {/* Reset global */}
