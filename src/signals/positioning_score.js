@@ -86,7 +86,11 @@ export function calcCombinedRatioScore(lsRatio, pcRatio) {
 export function calcPositioningScore(lsRatio, pcRatio) {
   if (lsRatio == null && pcRatio == null) return null
 
-  const divergenceScore = calcDivergenceScore(lsRatio, pcRatio)
+  // Optimisation: ne calculer divergenceScore que si les deux données existent
+  // calcDivergenceScore() retourne null si l'un est null, donc pas besoin de l'appeler
+  const divergenceScore = (lsRatio != null && pcRatio != null)
+    ? calcDivergenceScore(lsRatio, pcRatio)
+    : null
   const combinedScore   = calcCombinedRatioScore(lsRatio, pcRatio)
 
   const scores = [divergenceScore, combinedScore].filter(s => s != null)

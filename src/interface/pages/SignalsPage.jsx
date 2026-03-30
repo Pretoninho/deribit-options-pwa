@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { fetchSignals, fetchMarket } from '../../api/backend.js'
 import { saveSignal, hashMarketState } from '../../signals/signal_engine.js'
+import { smartCache } from '../../data/data_store/cache.js'
 import { interpretSignal, buildStrategySignature, buildMarketRegime } from '../../signals/signal_interpreter.js'
 import { generateInsight }    from '../../signals/insight_generator.js'
 import { getAllPatterns, computeAdvancedStats } from '../../signals/market_fingerprint.js'
@@ -406,6 +407,14 @@ export default function SignalsPage({ asset }) {
 
       setResult(sig)
       setPositioning(sig?.positioning ?? null)
+
+      // Optimisation: skip interpretation et saveSignal si le signal n'a pas changé
+      const signalCacheKey = `signals:${asset}:v1:result`
+      if (!smartCache.hasChanged(signalCacheKey)) {
+        setLastUpdate(new Date())
+        setLoading(false)
+        return
+      }
 
       const interp = interpretSignal(sig, raw)
       setInterpreted(interp)

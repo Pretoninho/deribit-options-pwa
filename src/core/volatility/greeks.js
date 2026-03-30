@@ -13,7 +13,15 @@ function normalPdf(x) {
   return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI)
 }
 
+// Memoization pour normalCdf (appelée 100+ fois par cycle)
+const _normalCdfCache = new Map()
+
 function normalCdf(x) {
+  // Arrondir à 4 décimales pour augmenter les hits du cache
+  const key = Math.round(x * 10000) / 10000
+  const cached = _normalCdfCache.get(key)
+  if (cached !== undefined) return cached
+
   const a1 = 0.319381530
   const a2 = -0.356563782
   const a3 = 1.781477937
@@ -21,10 +29,22 @@ function normalCdf(x) {
   const a5 = 1.330274429
   const p  = 0.2316419
 
-  if (x < 0) return 1 - normalCdf(-x)
-  const t = 1 / (1 + p * x)
-  const poly = ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t
-  return 1 - normalPdf(x) * poly
+  let result
+  if (x < 0) {
+    result = 1 - normalCdf(-x)
+  } else {
+    const t = 1 / (1 + p * x)
+    const poly = ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t
+    result = 1 - normalPdf(x) * poly
+  }
+
+  _normalCdfCache.set(key, result)
+  // Limiter la taille du cache à 500 entrées pour éviter la croissance infinie
+  if (_normalCdfCache.size > 500) {
+    const firstKey = _normalCdfCache.keys().next().value
+    _normalCdfCache.delete(firstKey)
+  }
+  return result
 }
 
 // ── Greeks ────────────────────────────────────────────────────────────────────
