@@ -136,7 +136,7 @@ export async function getMempoolData() {
  * }|null>}
  */
 export async function getExchangeFlows(asset = 'BTC') {
-  const apiKey = import.meta.env.VITE_CRYPTOQUANT_API_KEY
+  const apiKey = import.meta.env.VITE_CRYPTOQUANT_API_KEY='Y1t0ZJPeDAM9PbUHUUcljxZGELNZ7bra0Hjmf2HGRfrJBsBPUxu5FlJqeoavlmDObDaMB09QLz44Z'
   if (!apiKey || apiKey.trim() === '') {
     console.info(
       '[getExchangeFlows] Clé CryptoQuant absente — exchange flows désactivés'
