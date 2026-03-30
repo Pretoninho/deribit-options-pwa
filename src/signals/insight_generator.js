@@ -17,7 +17,27 @@ const MODEL         = API_CONFIG.CLAUDE_MODEL
 const CACHE_TTL_MS  = API_CONFIG.INSIGHT_CACHE_TTL_MS
 const MAX_TOKENS    = API_CONFIG.CLAUDE_MAX_TOKENS
 
+// Optimisation: TTL différent par métrique et LRU eviction (max 1000 entrées)
+const METRIC_TTL_MS = {
+  'iv_rank':        60_000,    // 1 minute — très volatil
+  'funding':        120_000,   // 2 minutes — modérément volatil
+  'basis':          120_000,   // 2 minutes
+  'iv_rv_premium':  120_000,   // 2 minutes
+  'global_score':   300_000,   // 5 minutes — composite stable
+  'positioning':    300_000,   // 5 minutes
+  'fear_greed':     300_000,   // 5 minutes — changement peu fréquent
+  'onchain_score':  300_000,   // 5 minutes
+  'mempool':        60_000,    // 1 minute — très volatil
+  'exchange_flow':  120_000,   // 2 minutes
+  'hash_rate':      300_000,   // 5 minutes — changement rares
+}
+const CACHE_MAX_SIZE = 1000
 const _cache = new Map()
+
+// Obtenir le TTL pour une métrique spécifique
+function _getTTLForMetric(metric) {
+  return METRIC_TTL_MS[metric] ?? CACHE_TTL_MS
+}
 
 // ── Prompts par métrique ──────────────────────────────────────────────────────
 
@@ -165,7 +185,8 @@ export async function generateInsight({ metric, value, context = {} }) {
 
   const key    = _cacheKey(metric, value)
   const cached = _cache.get(key)
-  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.data
+  const ttl    = _getTTLForMetric(metric)
+  if (cached && Date.now() - cached.ts < ttl) return cached.data
 
   const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY
   if (!apiKey) return _fallback(metric, value)
@@ -193,13 +214,28 @@ export async function generateInsight({ metric, value, context = {} }) {
     if (!raw) throw new Error('empty response')
 
     const data = { text: raw, bias: _inferBias(raw) }
-    _cache.set(key, { ts: Date.now(), data })
+    _cacheSet(key, { ts: Date.now(), data })
     return data
 
   } catch {
     const fb = _fallback(metric, value)
-    _cache.set(key, { ts: Date.now(), data: fb })
+    _cacheSet(key, { ts: Date.now(), data: fb })
     return fb
+  }
+}
+
+// Aide: ajouter au cache avec LRU eviction
+function _cacheSet(key, value) {
+  _cache.set(key, value)
+  // LRU eviction si dépasse la limite
+  if (_cache.size > CACHE_MAX_SIZE) {
+    // Supprimer les 10% les plus anciens
+    const entriesToRemove = Math.ceil(CACHE_MAX_SIZE * 0.1)
+    let removed = 0
+    for (const [k, v] of _cache) {
+      _cache.delete(k)
+      if (++removed >= entriesToRemove) break
+    }
   }
 }
 
