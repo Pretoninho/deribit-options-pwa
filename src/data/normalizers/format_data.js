@@ -17,10 +17,10 @@
 
 /**
  * @typedef {Object} NormalizedTicker
- * @property {'deribit'|'binance'|'coinbase'} source
+ * @property {'deribit'|'onchain'} source
  * @property {string} asset       — ex: 'BTC', 'ETH'
  * @property {'spot'|'future'|'perp'|'option'} type
- * @property {string} instrument  — ex: 'BTC-PERPETUAL', 'BTCUSDT'
+ * @property {string} instrument  — ex: 'BTC-PERPETUAL', 'BTC_USD'
  * @property {number|null} price
  * @property {number|null} bid
  * @property {number|null} ask
@@ -31,7 +31,7 @@
 
 /**
  * @typedef {Object} NormalizedOption
- * @property {'deribit'|'binance'|'coinbase'} source
+ * @property {'deribit'|'onchain'} source
  * @property {string} asset
  * @property {string} instrument
  * @property {'call'|'put'} optionType
@@ -50,7 +50,7 @@
 
 /**
  * @typedef {Object} NormalizedFunding
- * @property {'deribit'|'binance'|'coinbase'} source
+ * @property {'deribit'|'onchain'} source
  * @property {string} asset
  * @property {number|null} rate8h     — taux sur 8h en %
  * @property {number|null} rateAnn    — taux annualisé en %
@@ -61,7 +61,7 @@
 
 /**
  * @typedef {Object} NormalizedOI
- * @property {'deribit'|'binance'|'coinbase'} source
+ * @property {'deribit'|'onchain'} source
  * @property {string} asset
  * @property {number} total
  * @property {number} callOI
@@ -73,7 +73,7 @@
 
 /**
  * @typedef {Object} NormalizedDVOL
- * @property {'deribit'|'binance'|'coinbase'} source
+ * @property {'deribit'|'onchain'} source
  * @property {string} asset
  * @property {number} current
  * @property {number|null} weekAgo
@@ -234,96 +234,6 @@ export function normalizeDeribitOI(asset, rawResults) {
     putCallRatio: callOI > 0 ? putOI / callOI : null,
     timestamp: Date.now(),
     raw: rawResults,
-  }
-}
-
-// ── Normalisateurs Binance ────────────────────────────────────────────────────
-
-/**
- * Normalise un ticker 24h Binance → NormalizedTicker
- * rawResult : réponse de GET /api/v3/ticker/24hr ou /fapi/v1/ticker/24hr
- */
-export function normalizeBinanceTicker(rawResult, type = 'spot') {
-  if (!rawResult) return null
-  const symbol = rawResult.symbol ?? ''
-  // Extraire l'asset de base : BTCUSDT → BTC
-  const asset = symbol.replace(/USDT$|BUSD$|USD$/, '')
-
-  return {
-    source: 'binance',
-    asset,
-    type,
-    instrument: symbol,
-    price: rawResult.lastPrice != null ? Number(rawResult.lastPrice) : null,
-    bid: rawResult.bidPrice != null ? Number(rawResult.bidPrice) : null,
-    ask: rawResult.askPrice != null ? Number(rawResult.askPrice) : null,
-    volume24h: rawResult.quoteVolume != null ? Number(rawResult.quoteVolume) : null,
-    timestamp: rawResult.closeTime ?? Date.now(),
-    raw: rawResult,
-  }
-}
-
-/**
- * Normalise le funding rate Binance perpetuel
- * rawResult : réponse de GET /fapi/v1/fundingRate
- */
-export function normalizeBinanceFunding(asset, rawResult) {
-  if (!rawResult) return null
-  const rate8h = rawResult.fundingRate != null ? Number(rawResult.fundingRate) * 100 : null
-  const rateAnn = rate8h != null ? rate8h * 3 * 365 : null
-
-  return {
-    source: 'binance',
-    asset: asset.toUpperCase(),
-    rate8h,
-    rateAnn,
-    bullish: rateAnn != null ? rateAnn > 0 : null,
-    timestamp: rawResult.fundingTime ?? Date.now(),
-    raw: rawResult,
-  }
-}
-
-/**
- * Normalise l'open interest Binance futures
- * rawResult : réponse de GET /fapi/v1/openInterest
- */
-export function normalizeBinanceOI(asset, rawResult) {
-  if (!rawResult) return null
-  return {
-    source: 'binance',
-    asset: asset.toUpperCase(),
-    total: Number(rawResult.openInterest) || 0,
-    callOI: 0,
-    putOI: 0,
-    putCallRatio: null,
-    timestamp: rawResult.time ?? Date.now(),
-    raw: rawResult,
-  }
-}
-
-// ── Normalisateurs Coinbase ───────────────────────────────────────────────────
-
-/**
- * Normalise un ticker Coinbase Advanced → NormalizedTicker
- * rawResult : réponse de GET /api/v3/brokerage/products/{product_id}/ticker
- */
-export function normalizeCoinbaseTicker(rawResult) {
-  if (!rawResult) return null
-  const productId = rawResult.product_id ?? ''
-  // BTC-USD → BTC
-  const asset = productId.split('-')[0]
-
-  return {
-    source: 'coinbase',
-    asset,
-    type: 'spot',
-    instrument: productId,
-    price: rawResult.price != null ? Number(rawResult.price) : null,
-    bid: rawResult.best_bid != null ? Number(rawResult.best_bid) : null,
-    ask: rawResult.best_ask != null ? Number(rawResult.best_ask) : null,
-    volume24h: rawResult.volume_24_h != null ? Number(rawResult.volume_24_h) : null,
-    timestamp: rawResult.time ? new Date(rawResult.time).getTime() : Date.now(),
-    raw: rawResult,
   }
 }
 
