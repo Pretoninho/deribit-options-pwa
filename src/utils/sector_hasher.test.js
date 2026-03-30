@@ -2,6 +2,7 @@
  * Tests for sector_hasher.js utility functions
  */
 
+import { describe, test, expect } from 'vitest'
 import { hashSector, compareHashes, hashAllSectors, detectSectorChanges, getSectorHashSummary, SUPPORTED_SECTORS } from './sector_hasher.js'
 
 // Test suite: hashSector function

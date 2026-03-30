@@ -2,6 +2,7 @@
  * Tests for data_sanitizer.js utility functions
  */
 
+import { describe, test, expect } from 'vitest'
 import { sanitize, getExcludedFields, getSanitizedSize, NOISY_FIELDS } from './data_sanitizer.js'
 
 // Test suite: sanitize function
