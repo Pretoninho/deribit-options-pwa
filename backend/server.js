@@ -48,7 +48,7 @@ app.get('*', (_req, res) => {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   if (MAINTENANCE_MODE) {
     console.log(`Veridex signals API running on port ${PORT} [MAINTENANCE MODE]`)
   } else {
