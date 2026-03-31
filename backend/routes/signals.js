@@ -7,6 +7,7 @@ const { getUnifiedData, getUnifiedDataMultiTimeframe } = require('../services/da
 const { computeSignal }  = require('../services/signalEngine')
 const { computeMultiTimeframeRules } = require('../services/multiTimeframeRules')
 const { SmartCache }     = require('../utils/cache')
+const { buildSignalPayload } = require('../services/multiTimeframeService')
 
 const SUPPORTED_ASSETS = ['BTC', 'ETH']
 
@@ -49,8 +50,6 @@ router.get('/', async (req, res) => {
       const marketData = await getUnifiedData(asset)
       const signal     = computeSignal({ ...marketData, asset })
 
-      const multiTFData = await getUnifiedDataMultiTimeframe(asset)
-      const multiTFRules = computeMultiTimeframeRules(multiTFData)
 
       const cacheKey = `signal:${asset}`
       const changed  = _signalCache.setIfChanged(cacheKey, signal)
@@ -58,25 +57,10 @@ router.get('/', async (req, res) => {
       // Return the cached version (unchanged) to avoid serving duplicate recomputed signals.
       if (!changed) {
         const cached = _signalCache.get(cacheKey)
-        if (cached) {
-          return res.json({
-            ...cached,
-            cached: true,
-            multi_timeframe: {
-              ...multiTFData,
-              ...multiTFRules,
-            },
-          })
-        }
+        if (cached) return res.json(buildSignalPayload(asset, cached, { cached: true }))
       }
 
-      res.json({
-        ...signal,
-        multi_timeframe: {
-          ...multiTFData,
-          ...multiTFRules,
-        },
-      })
+      res.json(buildSignalPayload(asset, signal))
     } catch (err) {
       console.error(`[signals] Error computing signal for ${asset}:`, err?.message)
       res.status(502).json({ error: 'Failed to fetch market data', detail: err?.message })
@@ -88,23 +72,11 @@ router.get('/', async (req, res) => {
         try {
           const marketData = await getUnifiedData(asset)
           const signal     = computeSignal({ ...marketData, asset })
-
-          const multiTFData = await getUnifiedDataMultiTimeframe(asset)
-          const multiTFRules = computeMultiTimeframeRules(multiTFData)
-
           const cacheKey = `signal:${asset}`
           const changed  = _signalCache.setIfChanged(cacheKey, signal)
 
           const cached = _signalCache.get(cacheKey)
-          return {
-            asset,
-            ...cached || signal,
-            cached: !changed,
-            multi_timeframe: {
-              ...multiTFData,
-              ...multiTFRules,
-            },
-          }
+          return buildSignalPayload(asset, cached || signal, { cached: !changed })
         } catch (err) {
           console.error(`[signals] Error computing signal for ${asset}:`, err?.message)
           return {
