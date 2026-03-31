@@ -142,6 +142,7 @@ function TableHead({ cols, firstLeft = true }) {
 export default function DerivativesPage({ asset }) {
   const [state, setState] = useState({
     spot:         null,
+    dvol:         null,
     dFunding:     null,
     dFundingHist: null,
     dOI:          null,
@@ -163,9 +164,10 @@ export default function DerivativesPage({ asset }) {
     setLoading(true)
     try {
       const [
-        spotRes, dFundRes, dFundHistRes, dOIRes, instrRes,
+        spotRes, dvolRes, dFundRes, dFundHistRes, dOIRes, instrRes,
       ] = await Promise.allSettled([
         deribit.getSpot(asset),
+        deribit.getDVOL(asset),
         deribit.getFundingRate(asset),
         deribit.getFundingRateHistory(asset, 30),
         deribit.getOpenInterest(asset),
@@ -209,6 +211,7 @@ export default function DerivativesPage({ asset }) {
 
       setState({
         spot:         spotRes.status      === 'fulfilled' ? spotRes.value      : null,
+        dvol:         dvolRes.status      === 'fulfilled' ? dvolRes.value      : null,
         dFunding:     dFundRes.status     === 'fulfilled' ? dFundRes.value     : null,
         dFundingHist: dFundHistRes.status === 'fulfilled' ? dFundHistRes.value : null,
         dOI:          dOIRes.status       === 'fulfilled' ? dOIRes.value       : null,
@@ -221,7 +224,7 @@ export default function DerivativesPage({ asset }) {
     if (isMounted.current) setLoading(false)
   }
 
-  const { spot, dFunding, dFundingHist, dOI, futures } = state
+  const { spot, dvol, dFunding, dFundingHist, dOI, futures } = state
 
   const avgFunding30 = dFundingHist?.history?.length
     ? dFundingHist.history.reduce((s, r) => s + (safe(r.rateAnn) ?? 0), 0) / dFundingHist.history.length
@@ -263,6 +266,34 @@ export default function DerivativesPage({ asset }) {
           color="var(--accent)"
         />
       </div>
+
+      {/* ── DVOL (Implied Volatility) ── */}
+      {dvol && (
+        <>
+          <SectionTitle>Volatilité Implicite (DVOL)</SectionTitle>
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', marginBottom: 16 }}>
+            <TableHead cols={['Courant', 'IV Rank', 'Min 30j', 'Max 30j']} />
+            <div style={{
+              display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr',
+              alignItems: 'center', gap: 4, padding: '10px 16px',
+            }}>
+              <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: 'var(--call)' }}>
+                {dvol.current != null ? dvol.current.toFixed(1) : '—'}
+              </div>
+              <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: 'var(--text-bright)' }}>
+                {dvol.monthMin && dvol.monthMax && dvol.current ?
+                  Math.round(((dvol.current - dvol.monthMin) / (dvol.monthMax - dvol.monthMin)) * 100) + '%' : '—'}
+              </div>
+              <div style={{ textAlign: 'right', fontSize: 11, color: 'var(--text-muted)' }}>
+                {dvol.monthMin != null ? dvol.monthMin.toFixed(1) : '—'}
+              </div>
+              <div style={{ textAlign: 'right', fontSize: 11, color: 'var(--text-muted)' }}>
+                {dvol.monthMax != null ? dvol.monthMax.toFixed(1) : '—'}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* ── Funding Perpétuel ── */}
       <SectionTitle>Funding Perpétuel Deribit</SectionTitle>
