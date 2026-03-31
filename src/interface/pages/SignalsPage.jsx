@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
-import { fetchSignals } from '../../api/backend.js'
-import { getSignalHistory, saveSignal } from '../../signals/signal_engine.js'
+import { fetchSignals, saveSignal } from '../../api/backend.js'
 
 function RegimeCard({ regime }) {
   if (!regime || !regime.type) return null
@@ -215,13 +214,7 @@ export default function SignalsPage({ asset }) {
         if (result) {
           setSignal(result)
           // Sauvegarde pour l'historique
-          saveSignal({
-            asset: result.asset,
-            global: result.global,
-            signal: result.signal,
-            timestamp: result.timestamp,
-            scores: result.scores,
-          })
+          saveSignal(result)
         }
       } catch (err) {
         console.warn('[SignalsPage] Fetch error:', err)
