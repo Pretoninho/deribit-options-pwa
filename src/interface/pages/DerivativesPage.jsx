@@ -52,6 +52,12 @@ function daysUntil(ts) {
   return Math.max(1, Math.round((ts - Date.now()) / 86400000))
 }
 
+function pickDvolCurrentTimeframe(dvolPayload) {
+  if (!dvolPayload) return null
+  if (dvolPayload.current != null) return dvolPayload
+  return dvolPayload.dvol_1h ?? dvolPayload.dvol_4h ?? dvolPayload.dvol_1d ?? null
+}
+
 function pctColor(v) {
   const n = safe(v)
   if (n === null) return 'var(--text-muted)'
@@ -206,9 +212,12 @@ export default function DerivativesPage({ asset }) {
 
       if (!isMounted.current) return
 
+      const dvolRaw = dvolRes.status === 'fulfilled' ? dvolRes.value : null
+      const dvol = pickDvolCurrentTimeframe(dvolRaw)
+
       setState({
         spot:         spotRes.status      === 'fulfilled' ? spotRes.value      : null,
-        dvol:         dvolRes.status      === 'fulfilled' ? dvolRes.value      : null,
+        dvol,
         dFunding:     dFundRes.status     === 'fulfilled' ? dFundRes.value     : null,
         dFundingHist: dFundHistRes.status === 'fulfilled' ? dFundHistRes.value : null,
         dOI:          dOIRes.status       === 'fulfilled' ? dOIRes.value       : null,
@@ -278,7 +287,7 @@ export default function DerivativesPage({ asset }) {
                 {dvol.current != null ? dvol.current.toFixed(1) : '—'}
               </div>
               <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: 'var(--text-bright)' }}>
-                {dvol.monthMin && dvol.monthMax && dvol.current ?
+                {dvol.monthMin != null && dvol.monthMax != null && dvol.current != null && dvol.monthMax !== dvol.monthMin ?
                   Math.round(((dvol.current - dvol.monthMin) / (dvol.monthMax - dvol.monthMin)) * 100) + '%' : '—'}
               </div>
               <div style={{ textAlign: 'right', fontSize: 11, color: 'var(--text-muted)' }}>
