@@ -377,6 +377,106 @@ export function detectEntry5min(signal5min) {
   }
 }
 
+function _isTightRange(range) {
+  if (typeof range === 'boolean') return range
+  if (typeof range === 'string') return range.toLowerCase() === 'tight'
+  if (range && typeof range === 'object') return Boolean(range.tight)
+  return false
+}
+
+function _isLowVolume(volume) {
+  if (typeof volume === 'string') return volume.toLowerCase() === 'low'
+  if (volume && typeof volume === 'object') return Boolean(volume.low)
+  return false
+}
+
+function _isVolumeIncreasing(volume) {
+  if (typeof volume === 'string') return volume.toLowerCase() === 'increasing'
+  if (volume && typeof volume === 'object') return Boolean(volume.increasing)
+  return false
+}
+
+function _hasRejectionOrAbsorption(priceAction) {
+  if (!priceAction) return false
+  if (typeof priceAction === 'string') {
+    const normalized = priceAction.toLowerCase()
+    return normalized === 'rejection' || normalized === 'absorption'
+  }
+  return Boolean(priceAction.rejection || priceAction.absorption)
+}
+
+/**
+ * Évalue setup + entry avec règles de validation explicites.
+ *
+ * @param {{
+ *   regime: 'BREAKOUT'|'MEAN_REVERSION'|'NEUTRAL'|string,
+ *   range?: {tight?: boolean}|'tight'|boolean|null,
+ *   breakout_level?: {confirmed?: boolean}|number|null,
+ *   spike?: boolean,
+ *   oi_delta?: number|null,
+ *   funding?: number|null,
+ *   price_action?: {breakout_confirmed?: boolean,rejection?: boolean,absorption?: boolean}|string|null,
+ *   volume?: {low?: boolean,increasing?: boolean}|'low'|'increasing'|null
+ * }} inputs
+ * @returns {{
+ *   setup: 'COMPRESSION'|'EXCESS'|'NEUTRAL',
+ *   entry: 'ENTER_BREAKOUT'|'ENTER_MEAN_REVERSION'|'WAIT',
+ *   validations: {
+ *     setup_compression_valid: boolean,
+ *     setup_excess_valid: boolean,
+ *     entry_breakout_valid: boolean,
+ *     entry_mean_reversion_valid: boolean
+ *   }
+ * }}
+ */
+export function evaluateSetupEntry(inputs = {}) {
+  const {
+    regime = 'NEUTRAL',
+    range = null,
+    breakout_level = null,
+    spike = false,
+    oi_delta = null,
+    funding = null,
+    price_action = null,
+    volume = null
+  } = inputs
+
+  const setupCompressionValid = regime === 'BREAKOUT' && _isTightRange(range) && _isLowVolume(volume)
+  const setupExcessValid =
+    regime === 'MEAN_REVERSION' &&
+    Boolean(spike) &&
+    oi_delta != null &&
+    oi_delta > 0 &&
+    funding != null &&
+    Math.abs(funding) > 0.02
+
+  const setup = setupCompressionValid ? 'COMPRESSION' : setupExcessValid ? 'EXCESS' : 'NEUTRAL'
+
+  const breakoutConfirmed = Boolean(breakout_level?.confirmed || price_action?.breakout_confirmed)
+  const rejectionOrAbsorption = _hasRejectionOrAbsorption(price_action)
+  const volumeIncreasing = _isVolumeIncreasing(volume)
+
+  const entryBreakoutValid = setup === 'COMPRESSION' && breakoutConfirmed && volumeIncreasing
+  const entryMeanReversionValid = setup === 'EXCESS' && rejectionOrAbsorption
+
+  const entry = entryBreakoutValid
+    ? 'ENTER_BREAKOUT'
+    : entryMeanReversionValid
+    ? 'ENTER_MEAN_REVERSION'
+    : 'WAIT'
+
+  return {
+    setup,
+    entry,
+    validations: {
+      setup_compression_valid: setupCompressionValid,
+      setup_excess_valid: setupExcessValid,
+      entry_breakout_valid: entryBreakoutValid,
+      entry_mean_reversion_valid: entryMeanReversionValid
+    }
+  }
+}
+
 /**
  * Calcule le signal complet multi-timeframe avec validation hiérarchique.
  * Retourne scores + régimes + alignement pour HTF→MTF→LTF
@@ -401,6 +501,13 @@ export function computeSignalMultiTimeframe({
   data_4h,
   data_1h,
   data_5min,
+  range = null,
+  breakout_level = null,
+  spike = false,
+  oi_delta = null,
+  funding = null,
+  price_action = null,
+  volume = null,
   asset = 'BTC'
 }) {
   // Calculer scores pour chaque timeframe
@@ -420,6 +527,16 @@ export function computeSignalMultiTimeframe({
 
   // Prêt à trader ssi alignement + entry action EXECUTE
   const ready_to_trade = all_aligned && entry5min.action === 'EXECUTE'
+  const setupEntry = evaluateSetupEntry({
+    regime: regime4h.type,
+    range,
+    breakout_level,
+    spike,
+    oi_delta,
+    funding,
+    price_action,
+    volume
+  })
 
   return {
     asset,
@@ -436,7 +553,10 @@ export function computeSignalMultiTimeframe({
       mtf_ltf,
       all_aligned
     },
-    ready_to_trade
+    ready_to_trade,
+    setup: setupEntry.setup,
+    entry: setupEntry.entry,
+    validations: setupEntry.validations
   }
 }
 
