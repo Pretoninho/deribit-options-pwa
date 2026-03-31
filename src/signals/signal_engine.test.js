@@ -7,6 +7,7 @@ import {
   calcGlobalScore,
   getSignal,
   computeSignal,
+  detectRegime4h,
   hashMarketState,
   dvolFilter,
 } from './signal_engine.js'
@@ -237,6 +238,31 @@ describe('computeSignal', () => {
     expect(result.global).toBeNull()
     expect(result.dvolFactor).toBe(1)
     expect(result.signal).toBeNull()
+  })
+})
+
+describe('detectRegime4h', () => {
+  const signal4h = { scores: {}, global: 50, dvolFactor: 1 }
+
+  it('applique strictement la règle DVOL 4H < 40 => BREAKOUT', () => {
+    const result = detectRegime4h(signal4h, 39.9)
+    expect(result.type).toBe('BREAKOUT')
+    expect(result.rule_triggered).toBe('< 40 => BREAKOUT')
+  })
+
+  it('applique strictement la règle DVOL 4H > 70 => MEAN_REVERSION', () => {
+    const result = detectRegime4h(signal4h, 70.1)
+    expect(result.type).toBe('MEAN_REVERSION')
+    expect(result.rule_triggered).toBe('> 70 => MEAN_REVERSION')
+  })
+
+  it('retourne NEUTRAL sinon (incluant les bornes 40 et 70)', () => {
+    const at40 = detectRegime4h(signal4h, 40)
+    const at70 = detectRegime4h(signal4h, 70)
+    expect(at40.type).toBe('NEUTRAL')
+    expect(at70.type).toBe('NEUTRAL')
+    expect(at40.rule_triggered).toBe('otherwise => NEUTRAL')
+    expect(at70.rule_triggered).toBe('otherwise => NEUTRAL')
   })
 })
 
