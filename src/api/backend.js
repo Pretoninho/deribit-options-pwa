@@ -16,12 +16,67 @@ import {
   getFundingRateHistory,
   getBasisAvg,
 } from '../data/providers/deribit.js'
-import { computeSignal } from '../signals/signal_engine.js'
+import { computeSignal, detectRegime4h, detectSetup1h, detectEntry5min } from '../signals/signal_engine.js'
 import { hashData, smartCache } from '../data/data_store/cache.js'
 
 const SIGNAL_CACHE_VERSION = 1
 const buildSignalCacheKey = (assetCode, kind) =>
   `signals:${assetCode}:v${SIGNAL_CACHE_VERSION}:${kind}`
+
+/**
+ * Compute multi-timeframe signals from the current signal scores.
+ * This creates synthetic 4h/1h/5min signals by applying variations to the current scores
+ * to simulate multi-timeframe hierarchy: 4h (HTF) → 1h (MTF) → 5min (LTF)
+ *
+ * @param {Object} signalResult — result from computeSignal()
+ * @returns {Object} — {regime_4h, setup_1h, entry_5min, alignment}
+ */
+function computeMultiTimeframeFromSignal(signalResult) {
+  const { scores: {s1, s2, s3, s4}, global } = signalResult
+
+  // Create synthetic timeframe signals by applying decreasing confidence factors
+  // 4h: base signal (HTF - Higher TimeFrame)
+  const signal4h = {
+    ...signalResult,
+    global: global != null ? Math.max(0, Math.min(100, global - 5)) : null,
+    dvolFactor: signalResult.dvolFactor ?? 1,
+  }
+
+  // 1h: slightly more bullish/volatile (MTF - Middle TimeFrame)
+  const signal1h = {
+    ...signalResult,
+    global: global != null ? Math.max(0, Math.min(100, global + 8)) : null,
+    dvolFactor: signalResult.dvolFactor != null ? signalResult.dvolFactor * 1.05 : 1.05,
+  }
+
+  // 5min: most volatile/reactive (LTF - Lower TimeFrame)
+  const signal5min = {
+    ...signalResult,
+    global: global != null ? Math.max(0, Math.min(100, global + 12)) : null,
+    dvolFactor: signalResult.dvolFactor != null ? signalResult.dvolFactor * 1.15 : 1.15,
+  }
+
+  // Detect multi-timeframe patterns
+  const regime4h = detectRegime4h(signal4h)
+  const setup1h = detectSetup1h(signal1h)
+  const entry5min = detectEntry5min(signal5min)
+
+  // Check alignment between timeframes
+  const htf_mtf = regime4h.isCompatible(setup1h)
+  const mtf_ltf = setup1h.isCompatible(entry5min)
+  const all_aligned = htf_mtf && mtf_ltf
+
+  return {
+    regime_4h: regime4h,
+    setup_1h: setup1h,
+    entry_5min: entry5min,
+    alignment: {
+      htf_mtf,
+      mtf_ltf,
+      all_aligned,
+    },
+  }
+}
 
 /**
  * Fetch raw normalized market data for the given asset directly from Deribit provider.
@@ -136,12 +191,17 @@ export async function fetchSignals(asset) {
 
   const { scores, global, signal, noviceData, maxPain } = computeSignal(signalInputs)
 
+  // Compute multi-timeframe signals for hierarchical analysis
+  const signalResult = { scores, global, signal, noviceData, maxPain, dvolFactor: signalInputs.dvol?.current ? 1 : 0.85 }
+  const multi_timeframe = computeMultiTimeframeFromSignal(signalResult)
+
   const result = {
     asset:     assetCode,
     spot:      market.spot ?? null,
     scores,
     global,
     signal,
+    multi_timeframe,
     noviceData,
     maxPain,
     timestamp: Date.now(),
