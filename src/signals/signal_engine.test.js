@@ -7,7 +7,7 @@ import {
   calcGlobalScore,
   getSignal,
   computeSignal,
-  detectRegime4h,
+  evaluateSetupEntry,
   hashMarketState,
   dvolFilter,
 } from './signal_engine.js'
@@ -241,28 +241,53 @@ describe('computeSignal', () => {
   })
 })
 
-describe('detectRegime4h', () => {
-  const signal4h = { scores: {}, global: 50, dvolFactor: 1 }
+describe('evaluateSetupEntry', () => {
+  it('BREAKOUT + range tight + volume low => COMPRESSION', () => {
+    const result = evaluateSetupEntry({
+      regime: 'BREAKOUT',
+      range: 'tight',
+      volume: { low: true }
+    })
 
-  it('applique strictement la règle DVOL 4H < 40 => BREAKOUT', () => {
-    const result = detectRegime4h(signal4h, 39.9)
-    expect(result.type).toBe('BREAKOUT')
-    expect(result.rule_triggered).toBe('< 40 => BREAKOUT')
+    expect(result.setup).toBe('COMPRESSION')
+    expect(result.validations.setup_compression_valid).toBe(true)
   })
 
-  it('applique strictement la règle DVOL 4H > 70 => MEAN_REVERSION', () => {
-    const result = detectRegime4h(signal4h, 70.1)
-    expect(result.type).toBe('MEAN_REVERSION')
-    expect(result.rule_triggered).toBe('> 70 => MEAN_REVERSION')
+  it('MEAN_REVERSION + spike + oi_delta>0 + abs(funding)>0.02 => EXCESS', () => {
+    const result = evaluateSetupEntry({
+      regime: 'MEAN_REVERSION',
+      spike: true,
+      oi_delta: 1200,
+      funding: -0.03
+    })
+
+    expect(result.setup).toBe('EXCESS')
+    expect(result.validations.setup_excess_valid).toBe(true)
   })
 
-  it('retourne NEUTRAL sinon (incluant les bornes 40 et 70)', () => {
-    const at40 = detectRegime4h(signal4h, 40)
-    const at70 = detectRegime4h(signal4h, 70)
-    expect(at40.type).toBe('NEUTRAL')
-    expect(at70.type).toBe('NEUTRAL')
-    expect(at40.rule_triggered).toBe('otherwise => NEUTRAL')
-    expect(at70.rule_triggered).toBe('otherwise => NEUTRAL')
+  it('COMPRESSION + breakout_confirmed + volume_increasing => ENTER_BREAKOUT', () => {
+    const result = evaluateSetupEntry({
+      regime: 'BREAKOUT',
+      range: { tight: true },
+      volume: { low: true, increasing: true },
+      breakout_level: { confirmed: true }
+    })
+
+    expect(result.entry).toBe('ENTER_BREAKOUT')
+    expect(result.validations.entry_breakout_valid).toBe(true)
+  })
+
+  it('EXCESS + rejection/absorption => ENTER_MEAN_REVERSION', () => {
+    const result = evaluateSetupEntry({
+      regime: 'MEAN_REVERSION',
+      spike: true,
+      oi_delta: 10,
+      funding: 0.05,
+      price_action: { rejection: true }
+    })
+
+    expect(result.entry).toBe('ENTER_MEAN_REVERSION')
+    expect(result.validations.entry_mean_reversion_valid).toBe(true)
   })
 })
 
