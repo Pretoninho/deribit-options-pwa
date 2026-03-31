@@ -31,19 +31,8 @@ export {
 } from './data_store/hash_search.js'
 
 // ── Exports : providers ───────────────────────────────────────────────────────
-// v2.0: Deribit + On-Chain only
+// v2.0: Deribit only
 export * as deribit  from './providers/deribit.js'
-export * as onchain  from './providers/onchain.js'
-
-export {
-  getOnChainSnapshot,
-  getBlockchainStats,
-  getMempoolData,
-  getExchangeFlows,
-  getHashRateHistory,
-  getFearGreedIndex,
-  getWhaleTransactions,
-} from './providers/onchain.js'
 
 // ── Exports : clock sync ──────────────────────────────────────────────────────
 export {
@@ -98,12 +87,6 @@ export {
   clearSettlementHistory,
 } from '../signals/settlement_tracker.js'
 
-// ── Exports : Insight Generator ───────────────────────────────────────────────
-export {
-  generateInsight,
-  clearInsightCache,
-} from '../signals/insight_generator.js'
-
 // ── Exports : Notification Engine ─────────────────────────────────────────────
 export {
   checkNotifications,
@@ -123,7 +106,7 @@ export {
   clearNotificationHistory,
 } from '../signals/notification_manager.js'
 
-// ── Exports : signals & fingerprint ──────────────────────────────────────────
+// ── Exports : signals ───────────────────────────────────────────────────────────
 export {
   detectMarketAnomaly,
   hashMarketState,
@@ -132,51 +115,3 @@ export {
   getAnomalyLog,
   clearAnomalyLog,
 } from '../signals/signal_engine.js'
-
-export {
-  detectExchangeFlowSignal,
-  detectMempoolSignal,
-  detectMinerSignal,
-  compositeOnChainSignal,
-  interpretExchangeFlowsExpert,
-  interpretMempoolExpert,
-  interpretFearGreedExpert,
-  interpretWhalesExpert,
-  interpretHashRateExpert,
-} from '../signals/onchain_signals.js'
-
-export {
-  calcPositioningScore,
-  calcDivergenceScore,
-  calcCombinedRatioScore,
-  interpretPositioning,
-} from '../signals/positioning_score.js'
-
-export {
-  createFingerprint,
-  recordPattern,
-  updateOutcomes,
-  getPatternStats,
-  getAllPatterns,
-} from '../signals/market_fingerprint.js'
-
-// ── Exports : Snapshot Generator ──────────────────────────────────────────────
-export {
-  SNAPSHOT_VERSION,
-  MIN_OCCURRENCES_TO_EXPORT,
-  GENESIS_HASH,
-  generateSnapshot,
-  verifySnapshot,
-  snapshotToJSON,
-  snapshotFromJSON,
-  getSnapshotHistory,
-} from '../signals/snapshot_generator.js'
-
-// ── Exports : Snapshot Importer ───────────────────────────────────────────────
-export {
-  shouldImportSnapshot,
-  importSnapshot,
-  runInitialImport,
-  getImportState,
-  resetImportState,
-} from '../signals/snapshot_importer.js'
