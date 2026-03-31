@@ -23,6 +23,12 @@ const SIGNAL_CACHE_VERSION = 1
 const buildSignalCacheKey = (assetCode, kind) =>
   `signals:${assetCode}:v${SIGNAL_CACHE_VERSION}:${kind}`
 
+function pickDvolCurrentTimeframe(dvolPayload) {
+  if (!dvolPayload) return null
+  if (dvolPayload.current != null) return dvolPayload
+  return dvolPayload.dvol_1h ?? dvolPayload.dvol_4h ?? dvolPayload.dvol_1d ?? null
+}
+
 /**
  * Compute multi-timeframe signals from the current signal scores.
  * This creates synthetic 4h/1h/5min signals by applying variations to the current scores
@@ -113,7 +119,8 @@ export async function fetchMarket(asset) {
   ])
 
   const spot    = spotResult.status    === 'fulfilled' ? spotResult.value?.price ?? null : null
-  const dvol    = dvolResult.status    === 'fulfilled' ? dvolResult.value    : null
+  const dvolRaw = dvolResult.status    === 'fulfilled' ? dvolResult.value    : null
+  const dvol    = pickDvolCurrentTimeframe(dvolRaw)
   const funding = fundingResult.status === 'fulfilled' ? fundingResult.value : null
   const rv      = rvResult.status      === 'fulfilled' ? rvResult.value      : null
   const oi      = oiResult.status      === 'fulfilled' ? oiResult.value      : null
