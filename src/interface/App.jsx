@@ -3,18 +3,7 @@ import { version } from '../../package.json'
 import LandingPage    from './pages/LandingPage.jsx'
 import MarketPage     from './pages/MarketPage.jsx'
 import DerivativesPage from './pages/DerivativesPage.jsx'
-import OptionsDataPage from './pages/OptionsDataPage.jsx'
 import SignalsPage    from './pages/SignalsPage.jsx'
-import TradePage      from './pages/TradePage.jsx'
-import AssistantPage  from './pages/AssistantPage.jsx'
-import OnChainPage    from './pages/OnChainPage.jsx'
-import AuditPage      from './pages/AuditPage.jsx'
-import VolPage        from './pages/VolPage.jsx'
-import TrackerPage    from './pages/TrackerPage.jsx'
-import CalibrationPage from './pages/CalibrationPage.jsx'
-import FingerprintDebug from './pages/FingerprintDebug.jsx'
-import MonitorPage      from './pages/MonitorPage.jsx'
-import AnalyticsPage    from './pages/AnalyticsPage.jsx'
 import ClockStatus    from './components/ClockStatus.jsx'
 import AuditBanner    from './components/AuditBanner.jsx'
 import NavDrawer      from './components/NavDrawer.jsx'
@@ -29,7 +18,6 @@ import { runInitialImport } from '../signals/snapshot_importer.js'
 import { SectorSignalTracker } from '../signals/sector_signal_tracker.js'
 import { PatternSessionManager } from '../signals/pattern_session_manager.js'
 import { PatternClusterer } from '../signals/pattern_clustering.js'
-import NotificationSettingsPage from './pages/NotificationSettingsPage.jsx'
 import MaintenancePage          from './pages/MaintenancePage.jsx'
 import './App.css'
 
@@ -43,21 +31,9 @@ const ANOMALY_LOG_KEY   = 'veridex_anomaly_log'
 const RECENT_WINDOW_MS  = 10 * 60 * 1000
 
 const PAGE_NAMES = {
-  market:        'Market',
-  deriv:         'Dérivés',
-  options:       'Options',
-  signals:       'Signaux',
-  vol:           'Volatilité',
-  tracker:       'IV Live',
-  trade:         'Trade',
-  assistant:     'Assistant',
-  onchain:       'On-Chain',
-  audit:         'Audit',
-  analytics:     'Analytics',
-  notifications: 'Notifications',
-  calibration:   'Calibration',
-  fingerprint:   'Fingerprint Debug',
-  monitor:       'Monitoring',
+  market:  'Market',
+  deriv:   'Dérivés',
+  signals: 'Signaux',
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -286,26 +262,11 @@ export default function App() {
 
       {/* Contenu des pages */}
       <div className="app-content">
-        {tab === 'market'        && <MarketPage             asset={asset} />}
-        {tab === 'deriv'         && <DerivativesPage        asset={asset} clockSync={clockSync} />}
-        {tab === 'options'       && <OptionsDataPage        asset={asset} clockSync={clockSync} />}
-        {tab === 'signals'       && <SignalsPage            asset={asset} clockSync={clockSync} />}
-        {tab === 'vol'           && <VolPage />}
-        {tab === 'tracker'       && <TrackerPage />}
-        {tab === 'trade'         && <TradePage              asset={asset} />}
-        {tab === 'assistant'     && <AssistantPage          asset={asset} />}
-        {tab === 'onchain'       && <OnChainPage            asset={asset} />}
-        {tab === 'audit'         && <AuditPage />}
-        {tab === 'analytics'     && <AnalyticsPage         asset={asset} clockSync={clockSync} />}
-        {tab === 'notifications' && <NotificationSettingsPage />}
-        {tab === 'calibration'   && <CalibrationPage />}
-        {tab === 'fingerprint'   && <FingerprintDebug />}
-        {tab === 'monitor'       && <MonitorPage asset={asset} />}
+        {tab === 'market'  && <MarketPage      asset={asset} />}
+        {tab === 'deriv'   && <DerivativesPage asset={asset} clockSync={clockSync} />}
+        {tab === 'signals' && <SignalsPage     asset={asset} clockSync={clockSync} />}
         <VersionBar version={version} forceUpdate={forceUpdate} />
       </div>
-
-      {/* Bandeau anomalie */}
-      <AuditBanner onNavigateToAudit={() => setTab('audit')} />
 
       {/* Drawer de navigation */}
       {drawerOpen && (
