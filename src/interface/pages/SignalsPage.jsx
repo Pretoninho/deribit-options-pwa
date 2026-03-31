@@ -2,6 +2,159 @@ import { useState, useEffect } from 'react'
 import { fetchSignals } from '../../api/backend.js'
 import { getSignalHistory, saveSignal } from '../../signals/signal_engine.js'
 
+function RegimeCard({ regime }) {
+  if (!regime) return null
+  const iconMap = {
+    'BREAKOUT': '📈',
+    'MEAN_REVERSION': '📉',
+    'NEUTRAL': '➡️'
+  }
+  const icon = iconMap[regime.type] || '❓'
+  const confidencePct = Math.round((regime.confidence ?? 0) * 100)
+
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,.03)',
+      border: '1px solid rgba(255,255,255,.08)',
+      borderRadius: 8,
+      padding: '12px',
+      marginBottom: 12,
+    }}>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, fontWeight: 600 }}>
+        4H RÉGIME {icon}
+      </div>
+      <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>
+        {regime.type === 'BREAKOUT' ? '🔓 Compression → Attend Cassure' :
+         regime.type === 'MEAN_REVERSION' ? '⚖️ Excès → Attend Reversion' :
+         '⏸️ Neutre'}
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+        Confiance: <span style={{ fontFamily: 'var(--mono)', fontWeight: 600 }}>{confidencePct}%</span>
+      </div>
+    </div>
+  )
+}
+
+function SetupCard({ setup }) {
+  if (!setup) return null
+  const iconMap = {
+    'COMPRESSION': '📦',
+    'SPIKE': '⚡',
+    'NEUTRAL': '➡️'
+  }
+  const icon = iconMap[setup.type] || '❓'
+  const confidencePct = Math.round((setup.confidence ?? 0) * 100)
+
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,.03)',
+      border: '1px solid rgba(255,255,255,.08)',
+      borderRadius: 8,
+      padding: '12px',
+      marginBottom: 12,
+    }}>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, fontWeight: 600 }}>
+        1H SETUP {icon}
+      </div>
+      <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>
+        {setup.type === 'COMPRESSION' ? '📦 Compression Détectée' :
+         setup.type === 'SPIKE' ? '⚡ Spike Détecté' :
+         '⏸️ Neutre'}
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+        Confiance: <span style={{ fontFamily: 'var(--mono)', fontWeight: 600 }}>{confidencePct}%</span>
+      </div>
+    </div>
+  )
+}
+
+function EntryCard({ entry }) {
+  if (!entry) return null
+  const isExecutable = entry.action === 'EXECUTE'
+  const iconMap = {
+    'BREAKOUT': '🔥',
+    'REJECTION': '❄️',
+    'WAIT': '⏳'
+  }
+  const icon = iconMap[entry.signal] || '❓'
+  const confidencePct = Math.round((entry.confidence ?? 0) * 100)
+
+  return (
+    <div style={{
+      background: isExecutable ? 'rgba(34,197,94,.08)' : 'rgba(255,255,255,.03)',
+      border: isExecutable ? '1px solid rgba(34,197,94,.3)' : '1px solid rgba(255,255,255,.08)',
+      borderRadius: 8,
+      padding: '12px',
+      marginBottom: 12,
+    }}>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, fontWeight: 600 }}>
+        5MIN ENTRY {icon}
+      </div>
+      <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>
+        {entry.signal === 'BREAKOUT' ? '🔥 Cassure Détectée' :
+         entry.signal === 'REJECTION' ? '❄️ Rejet Détecté' :
+         '⏳ Attend Signal'}
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 6 }}>
+        Action: <span style={{
+          fontFamily: 'var(--mono)',
+          fontWeight: 600,
+          color: isExecutable ? 'var(--call)' : 'var(--text-muted)'
+        }}>
+          {entry.action === 'EXECUTE' ? '✓ EXÉCUTER' : 'ATTENDRE'}
+        </span>
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+        Confiance: <span style={{ fontFamily: 'var(--mono)', fontWeight: 600 }}>{confidencePct}%</span>
+      </div>
+    </div>
+  )
+}
+
+function AlignmentCard({ alignment }) {
+  if (!alignment) return null
+  const allAligned = alignment.all_aligned
+
+  return (
+    <div style={{
+      background: allAligned ? 'rgba(34,197,94,.08)' : 'rgba(255,165,0,.08)',
+      border: allAligned ? '1px solid rgba(34,197,94,.3)' : '1px solid rgba(255,165,0,.3)',
+      borderRadius: 8,
+      padding: '12px',
+      marginBottom: 12,
+    }}>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, fontWeight: 600 }}>
+        ALIGNEMENT HTF→MTF→LTF
+      </div>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr 1fr',
+        gap: 8,
+        fontSize: 12,
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>4H→1H</div>
+          <div style={{ fontWeight: 700, color: alignment.htf_mtf ? 'var(--call)' : 'var(--put)' }}>
+            {alignment.htf_mtf ? '✓' : '✗'}
+          </div>
+        </div>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>1H→5M</div>
+          <div style={{ fontWeight: 700, color: alignment.mtf_ltf ? 'var(--call)' : 'var(--put)' }}>
+            {alignment.mtf_ltf ? '✓' : '✗'}
+          </div>
+        </div>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>ALL</div>
+          <div style={{ fontWeight: 700, color: alignment.all_aligned ? 'var(--call)' : 'var(--put)' }}>
+            {alignment.all_aligned ? '✓' : '✗'}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /**
  * Affiche le score composite de 4 composantes simplifiées:
  * s1 IV (35%), s2 Funding (25%), s3 Basis (25%), s4 IV/RV (15%)
@@ -49,6 +202,7 @@ export default function SignalsPage({ asset, clockSync }) {
   const [signal, setSignal] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [selectedAsset, setSelectedAsset] = useState(asset || 'BTC')
   const refreshInterval = 10000 // 10 secondes
 
   // Charge le signal au montage et à chaque rafraîchissement
@@ -57,7 +211,7 @@ export default function SignalsPage({ asset, clockSync }) {
       setLoading(true)
       setError(null)
       try {
-        const result = await fetchSignals(asset)
+        const result = await fetchSignals(selectedAsset)
         if (result) {
           setSignal(result)
           // Sauvegarde pour l'historique
@@ -80,7 +234,7 @@ export default function SignalsPage({ asset, clockSync }) {
     load()
     const timer = setInterval(load, refreshInterval)
     return () => clearInterval(timer)
-  }, [asset])
+  }, [selectedAsset])
 
   if (!signal && loading) {
     return (
@@ -116,6 +270,29 @@ export default function SignalsPage({ asset, clockSync }) {
 
   return (
     <div style={{ padding: '16px', height: '100%', overflowY: 'auto' }}>
+
+      {/* Asset selector */}
+      <div style={{ marginBottom: 20, display: 'flex', gap: 8 }}>
+        {['BTC', 'ETH'].map(a => (
+          <button
+            key={a}
+            onClick={() => setSelectedAsset(a)}
+            style={{
+              padding: '6px 12px',
+              borderRadius: 6,
+              border: selectedAsset === a ? '1px solid var(--text-bright)' : '1px solid rgba(255,255,255,.2)',
+              background: selectedAsset === a ? 'rgba(255,255,255,.1)' : 'transparent',
+              color: selectedAsset === a ? 'var(--text-bright)' : 'var(--text-muted)',
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all .2s ease',
+            }}
+          >
+            {a}
+          </button>
+        ))}
+      </div>
 
       {/* Titre et refresh status */}
       <div style={{ marginBottom: 20 }}>
@@ -158,6 +335,19 @@ export default function SignalsPage({ asset, clockSync }) {
           </div>
         )}
       </div>
+
+      {/* Multi-Timeframe Analysis */}
+      {signal.multi_timeframe && (
+        <div style={{ marginBottom: 20 }}>
+          <h3 style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 12px 0', fontWeight: 700, letterSpacing: '0.5px' }}>
+            ANALYSE MULTI-TIMEFRAME
+          </h3>
+          <RegimeCard regime={signal.multi_timeframe.regime_4h} />
+          <SetupCard setup={signal.multi_timeframe.setup_1h} />
+          <EntryCard entry={signal.multi_timeframe.entry_5min} />
+          <AlignmentCard alignment={signal.multi_timeframe.alignment} />
+        </div>
+      )}
 
       {/* Composantes détaillées */}
       <div style={{ marginBottom: 20 }}>
