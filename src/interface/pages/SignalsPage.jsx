@@ -1,5 +1,132 @@
 import { useState, useEffect } from 'react'
-import { fetchSignals, saveSignal } from '../../api/backend.js'
+import * as deribit from '../../data/providers/deribit.js'
+import {
+  computeSignal,
+  computeSignalMultiTimeframe,
+  hashMarketState,
+  saveSignal as persistSignal,
+} from '../../signals/signal_engine.js'
+import {
+  interpretSignal,
+  interpretMultiTimeframeSignal,
+} from '../../signals/signal_interpreter.js'
+
+function pickDvolForTimeframe(dvolBundle, timeframe) {
+  if (!dvolBundle) return null
+  if (timeframe === '4h') return dvolBundle.dvol_4h ?? dvolBundle.dvol_1h ?? dvolBundle.dvol_1d ?? null
+  if (timeframe === '5min') return dvolBundle.dvol_1h ?? dvolBundle.dvol_4h ?? dvolBundle.dvol_1d ?? null
+  return dvolBundle.dvol_1h ?? dvolBundle.dvol_4h ?? dvolBundle.dvol_1d ?? null
+}
+
+function buildExecutionPayload(interpretedMultiTimeframe) {
+  const action = interpretedMultiTimeframe?.action ?? 'WAIT'
+  const position =
+    action === 'BUY_BREAKOUT' ? 'LONG' :
+    action === 'SELL_REVERSION' ? 'SHORT' :
+    'WAIT'
+
+  return {
+    action,
+    position,
+    reason: interpretedMultiTimeframe?.reason ?? '',
+  }
+}
+
+function buildRuleTrace(multiTimeframe, interpretedMultiTimeframe) {
+  return [
+    {
+      rule: '4H regime detected',
+      passed: (multiTimeframe?.regime4h?.type ?? 'NEUTRAL') !== 'NEUTRAL',
+      detail: `4H=${multiTimeframe?.regime4h?.type ?? 'N/A'} · confiance ${Math.round((multiTimeframe?.regime4h?.confidence ?? 0) * 100)}%`,
+    },
+    {
+      rule: '4H -> 1H alignment',
+      passed: multiTimeframe?.alignment?.htf_mtf ?? false,
+      detail: `${multiTimeframe?.regime4h?.type ?? 'N/A'} -> ${multiTimeframe?.setup1h?.type ?? 'N/A'}`,
+    },
+    {
+      rule: '1H -> 5M alignment',
+      passed: multiTimeframe?.alignment?.mtf_ltf ?? false,
+      detail: `${multiTimeframe?.setup1h?.type ?? 'N/A'} -> ${multiTimeframe?.entry5min?.signal ?? 'N/A'}`,
+    },
+    {
+      rule: 'Execution readiness',
+      passed: (multiTimeframe?.ready_to_trade ?? false) || (multiTimeframe?.entry5min?.action === 'EXECUTE'),
+      detail: interpretedMultiTimeframe?.reason ?? 'En attente de validation multi-timeframe',
+    },
+  ]
+}
+
+async function loadFrontSignal(asset) {
+  const assetCode = asset.toUpperCase()
+
+  const [snapshotResult, instrumentsResult] = await Promise.allSettled([
+    deribit.getMarketSnapshot(assetCode),
+    deribit.getInstruments(assetCode, 'option'),
+  ])
+
+  const snapshot = snapshotResult.status === 'fulfilled' ? (snapshotResult.value ?? {}) : {}
+  const instruments = instrumentsResult.status === 'fulfilled' ? (instrumentsResult.value ?? []) : []
+
+  const spot = snapshot?.spot?.price ?? null
+  const basisAvg = await deribit.getBasisAvg(assetCode, spot).catch(() => null)
+
+  const dvol1h = pickDvolForTimeframe(snapshot?.dvol, '1h')
+  const dvol4h = pickDvolForTimeframe(snapshot?.dvol, '4h')
+  const dvol5min = pickDvolForTimeframe(snapshot?.dvol, '5min')
+
+  const marketInputs = {
+    asset: assetCode,
+    spot,
+    dvol: dvol1h,
+    funding: snapshot?.funding ?? null,
+    rv: snapshot?.rv ?? null,
+    basisAvg,
+    instruments,
+  }
+
+  const signal = computeSignal(marketInputs)
+
+  const multiTimeframeRaw = computeSignalMultiTimeframe({
+    asset: assetCode,
+    data_4h: { ...marketInputs, dvol: dvol4h },
+    data_1h: { ...marketInputs, dvol: dvol1h },
+    data_5min: { ...marketInputs, dvol: dvol5min },
+    funding: snapshot?.funding?.rateAnn ?? snapshot?.funding?.avgAnn7d ?? null,
+  })
+
+  const interpreted = interpretSignal(signal, {
+    dvol: dvol1h,
+    funding: snapshot?.funding ?? null,
+    rv: snapshot?.rv ?? null,
+    basisAvg,
+    spot,
+    asset: assetCode,
+  })
+
+  const interpretedMultiTimeframe = interpretMultiTimeframeSignal(multiTimeframeRaw)
+  const marketHash = hashMarketState(marketInputs)
+
+  return {
+    asset: assetCode,
+    ...signal,
+    spot,
+    timestamp: Date.now(),
+    marketHash,
+    multi_timeframe: {
+      regime_4h: multiTimeframeRaw.regime4h,
+      setup_1h: multiTimeframeRaw.setup1h,
+      entry_5min: multiTimeframeRaw.entry5min,
+      alignment: multiTimeframeRaw.alignment,
+      execution: buildExecutionPayload(interpretedMultiTimeframe),
+      options_overlay: {
+        strategy: interpreted?.expert?.recommendations?.options?.signal ?? null,
+        action: interpreted?.expert?.recommendations?.options?.action ?? null,
+      },
+      rule_trace: buildRuleTrace(multiTimeframeRaw, interpretedMultiTimeframe),
+    },
+  }
+}
 
 function RegimeCard({ regime }) {
   if (!regime || !regime.type) return null
@@ -291,15 +418,20 @@ export default function SignalsPage({ asset }) {
       setLoading(true)
       setError(null)
       try {
-        const result = await fetchSignals(selectedAsset)
+        const result = await loadFrontSignal(selectedAsset)
         if (result) {
           setSignal(result)
-          // Sauvegarde pour l'historique
-          saveSignal(result)
+          await persistSignal({
+            asset: result.asset,
+            score: result.global,
+            conditions: result.scores,
+            recommendation: result.signal?.label ?? 'N/A',
+            marketHash: result.marketHash,
+          }).catch(() => {})
         }
       } catch (err) {
         console.warn('[SignalsPage] Fetch error:', err)
-        setError(err.message)
+        setError(err instanceof Error ? err.message : 'Erreur de chargement des signaux.')
       } finally {
         setLoading(false)
       }
