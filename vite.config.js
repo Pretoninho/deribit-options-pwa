@@ -6,7 +6,7 @@ import { readFileSync } from 'fs'
 const { version } = JSON.parse(readFileSync('./package.json', 'utf-8'))
 
 export default defineConfig({
-  base: './',
+  base: '/veridex/',
   test: {
     environment: 'jsdom',
     setupFiles: './src/test/setup.js',
