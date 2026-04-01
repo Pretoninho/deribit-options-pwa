@@ -5,7 +5,7 @@
  * Les dérivés sont dans l'onglet Derivés.
  */
 import { useState, useEffect, useRef } from 'react'
-import { fetchMarket } from '../../api/backend.js'
+import * as deribit  from '../../data/providers/deribit.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -109,7 +109,6 @@ function ExchangeRow({ name, color, note, price, asset, bid, ask, volume24h, cha
 export default function MarketPage({ asset }) {
   const [spots,      setSpots]      = useState({})
   const [loading,    setLoading]    = useState(false)
-  const [error,      setError]      = useState(null)
   const [lastUpdate, setLastUpdate] = useState(null)
   const isMounted = useRef(true)
 
@@ -123,23 +122,16 @@ export default function MarketPage({ asset }) {
   const load = async () => {
     if (!isMounted.current) return
     setLoading(true)
-    setError(null)
     try {
-      const market = await fetchMarket(asset)
+      const [dSpot] = await Promise.allSettled([
+        deribit.getSpot(asset),
+      ])
       if (!isMounted.current) return
       setSpots({
-        deribit: {
-          price: market?.spot ?? null,
-          volume24h: null,
-          bid: null,
-          ask: null,
-          change24h: null,
-        },
+        deribit:  dSpot.status  === 'fulfilled' ? dSpot.value  : null,
       })
       setLastUpdate(new Date())
-    } catch (err) {
-      if (isMounted.current) setError(err?.message || 'Erreur de chargement du marché')
-    }
+    } catch (_) {}
     if (isMounted.current) setLoading(false)
   }
 
@@ -222,12 +214,6 @@ export default function MarketPage({ asset }) {
           )
         })}
       </div>
-
-      {error && (
-        <div style={{ marginTop: 10, color: 'var(--put)', fontSize: 11 }}>
-          {error}
-        </div>
-      )}
 
       {lastUpdate && (
         <div style={{ textAlign: 'center', fontSize: 10, color: 'var(--text-muted)', opacity: .5, marginTop: 12, marginBottom: 4 }}>
