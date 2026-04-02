@@ -64,7 +64,7 @@ app.get('/health', async (req, res) => {
     body.ws        = wsClient.getStatus()
     body.collector = body.collector ?? getCollectorStatus()
   }
-  res.status(MAINTENANCE_MODE ? 503 : 200).json(body)
+  res.status(200).json(body)
 })
 
 // ── Debug routes (development only) ─────────────────────────────────────────
