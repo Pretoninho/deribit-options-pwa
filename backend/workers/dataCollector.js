@@ -21,6 +21,7 @@ const { fetchAllData }  = require('../data_core/index')
 const { computeSignal } = require('../services/signalEngine')
 const store             = require('./dataStore')
 const wsClient          = require('./deribitWsClient')
+const { extractDirection, selectVolSource, DEFAULT_K } = require('../utils/volThreshold')
 
 const ASSETS              = ['BTC', 'ETH']
 const TICK_INTERVAL_MS    = 60_000  // emit aggregated tick every 60 s
@@ -263,6 +264,9 @@ async function _processTick(asset) {
 
   // ── Persist signal ────────────────────────────────────────────────────────
 
+  const direction = extractDirection(signal.positioning)
+  const { volAnn, source: volSource } = selectVolSource(data.dvol, data.rv)
+
   await store.insert('signals', {
     asset,
     timestamp:     now,
@@ -277,6 +281,10 @@ async function _processTick(asset) {
       s5: signal.scores?.s5,
       s6: signal.scores?.s6,
     }),
+    direction:  direction,
+    vol_source: volSource,
+    vol_ann:    volAnn,
+    k:          DEFAULT_K,
   })
 }
 
