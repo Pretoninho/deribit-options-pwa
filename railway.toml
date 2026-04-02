@@ -1,6 +1,5 @@
 [build]
 builder = "DOCKERFILE"
-buildCommand = "VITE_API_BASE_URL=https://veridex-production-6327.up.railway.app npm ci && npm run build"
 
 [deploy]
 startCommand = "node backend/server.js"

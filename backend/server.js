@@ -51,6 +51,8 @@ app.use(cors({
     }
   },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }))
 app.use(express.json())
 app.use(express.static(path.join(__dirname, '../dist')))
@@ -135,6 +137,7 @@ async function start() {
       } else {
         console.log(`Veridex signals API running on port ${PORT}`)
       }
+      console.log('[server] CORS allowed origins: https://pretoninho.github.io, http://localhost:3000, http://localhost:5173, /^https:\\/\\/veridex-.*\\.railway\\.app$/')
       resolve()
     }).on('error', reject)
   })
