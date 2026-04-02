@@ -3,13 +3,16 @@ FROM node:24-alpine AS builder
 
 WORKDIR /app
 
+# Build-time variable so the Vite frontend knows the Railway API URL
+ARG VITE_API_BASE_URL=https://veridex-production-6327.up.railway.app
+
 # Install root dependencies (frontend build tools)
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
 
-# Copy source and build frontend
+# Copy source and build frontend with the correct API base URL
 COPY . .
-RUN npm run build
+RUN VITE_API_BASE_URL=$VITE_API_BASE_URL npm run build
 
 # ── Production stage ──────────────────────────────────────────────────────────
 FROM node:24-alpine AS production
