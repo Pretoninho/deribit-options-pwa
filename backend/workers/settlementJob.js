@@ -1,27 +1,16 @@
 /**
  * backend/workers/settlementJob.js
  *
- * Settlement / outcome-labeling job.
+ * Periodic settlement job.
  *
- * Every SETTLEMENT_INTERVAL_MS (default 5 minutes), looks for signals that
- * have not yet been fully settled and tries to compute outcomes at:
- *   - +1h  (price_1h_after  / move_1h_pct)
- *   - +4h  (price_4h_after  / move_4h_pct)
- *   - +24h (price_24h_after / move_24h_pct)
+ * Every SETTLEMENT_INTERVAL_MS (default 5 minutes) this job:
+ *   1. Finds directional signals (direction IS NOT NULL) whose 1h / 4h / 24h
+ *      target times have elapsed and whose outcomes are not yet fully settled.
+ *   2. Looks up the closest ticker price at or after each target timestamp.
+ *   3. Computes the return, volatility-based threshold, and WIN/LOSS/FLAT label.
+ *   4. Persists (insert or update) the outcomes row for each settled horizon.
  *
- * For each horizon, the nearest ticker row whose timestamp falls within
- * a tolerance window (HORIZON_TOLERANCE_MS) of the target time is used.
- * If no such ticker exists yet (future horizon), the field is left NULL.
- *
- * Once at least one horizon is settled, a row is inserted/updated in the
- * `outcomes` table.  When all three horizons are settled, the signal row is
- * also updated with:
- *   - outcome      : "WIN" | "LOSS" | "FLAT" (based on 4h move by default)
- *   - outcome_price: the 4h price
- *   - pnl          : move_4h_pct (the percentage return)
- *
- * The WIN/LOSS threshold is configurable via SETTLEMENT_WIN_THRESHOLD_PCT
- * (default 0 — any positive move is a WIN).
+ * Neutral signals (direction = null) are skipped — no outcome is produced.
  *
  * Exports: startSettlementJob, stopSettlementJob, getSettlementStatus
  */
@@ -29,229 +18,158 @@
 'use strict'
 
 const store = require('./dataStore')
+const { computeThreshold, labelOutcome } = require('../utils/volThreshold')
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
-const SETTLEMENT_INTERVAL_MS   = parseInt(process.env.SETTLEMENT_INTERVAL_MS ?? '300000', 10) // 5 min
-const HORIZONS_MS = {
-  h1:  1  * 60 * 60_000,
-  h4:  4  * 60 * 60_000,
-  h24: 24 * 60 * 60_000,
-}
-const HORIZON_TOLERANCE_MS     = parseInt(process.env.HORIZON_TOLERANCE_MS ?? '120000', 10)    // ±2 min
-const WIN_THRESHOLD_PCT        = parseFloat(process.env.SETTLEMENT_WIN_THRESHOLD_PCT ?? '0')
-// Batch size: max signals to process per run (prevents long-running queries)
-const BATCH_SIZE               = parseInt(process.env.SETTLEMENT_BATCH_SIZE ?? '100', 10)
+/** How often the settlement loop runs (ms). */
+const SETTLEMENT_INTERVAL_MS = parseInt(process.env.SETTLEMENT_INTERVAL_MS ?? '300000', 10)
+
+/** Maximum signals processed per settlement run (safety limit). */
+const BATCH_SIZE = 200
+
+/** Horizon definitions: key used in column names, duration in ms and fractional days. */
+const HORIZONS = [
+  { key: '1h',  ms: 1  * 3_600_000, days: 1  / 24 },
+  { key: '4h',  ms: 4  * 3_600_000, days: 4  / 24 },
+  { key: '24h', ms: 24 * 3_600_000, days: 1       },
+]
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
-let _intervalId   = null
-let _isRunning    = false
-let _lastRunAt    = null
-let _settledCount = 0
-let _errorCount   = 0
+let _intervalId = null
+let _isRunning  = false
+let _runCount   = 0
+let _errorCount = 0
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function _ts() { return new Date().toISOString() }
 
 /**
- * Classify the outcome of a signal given a percentage move.
- * @param {number} movePct — percentage price change (e.g. 2.5 means +2.5%)
- * @returns {'WIN'|'LOSS'|'FLAT'}
- */
-function _classifyOutcome(movePct) {
-  if (movePct > WIN_THRESHOLD_PCT)  return 'WIN'
-  if (movePct < -WIN_THRESHOLD_PCT) return 'LOSS'
-  return 'FLAT'
-}
-
-/**
- * Find the nearest ticker price for a given asset at a target timestamp.
- * Returns null if no ticker falls within HORIZON_TOLERANCE_MS.
+ * Settle a single signal for all eligible, unsettled horizons.
  *
- * @param {string} asset
- * @param {number} targetTs  — epoch ms
- * @returns {Promise<number|null>}
+ * @param {object} sig          - signal row (id, asset, timestamp, trigger_price, direction, vol_ann, k)
+ * @param {object|null} outcome - existing outcomes row (may be null or partial)
+ * @param {number} now          - current epoch ms
  */
-async function _priceAt(asset, targetTs) {
-  const rows = await store.query(
-    `SELECT spot FROM tickers
-      WHERE asset = ?
-        AND timestamp >= ?
-        AND timestamp <= ?
-      ORDER BY ABS(timestamp - ?) ASC
-      LIMIT 1`,
-    [asset, targetTs - HORIZON_TOLERANCE_MS, targetTs + HORIZON_TOLERANCE_MS, targetTs],
-  )
-  if (!rows.length || rows[0].spot == null) return null
-  return Number(rows[0].spot)
-}
+async function _settleSignal(sig, outcome, now) {
+  const triggerPrice = Number(sig.trigger_price)
+  const volAnn       = sig.vol_ann != null ? Number(sig.vol_ann) : null
+  const k            = sig.k       != null ? Number(sig.k)       : 0.75
 
-/**
- * Load all unsettled signals for a given asset (no fully-settled outcome yet).
- * "Unsettled" means either no outcomes row exists, or move_24h_pct is still NULL.
- *
- * @param {string} asset
- * @returns {Promise<Array>}
- */
-async function _loadUnsettledSignals(asset) {
-  // Use LEFT JOIN so signals with no outcome row at all are included.
-  return store.query(
-    `SELECT s.id, s.asset, s.timestamp, s.trigger_price, s.outcome,
-            o.id AS outcome_id,
-            o.price_1h_after, o.price_4h_after, o.price_24h_after,
-            o.move_1h_pct,    o.move_4h_pct,    o.move_24h_pct
-       FROM signals s
-       LEFT JOIN outcomes o ON o.signal_id = s.id
-      WHERE s.asset = ?
-        AND s.timestamp <= ?
-        AND (o.id IS NULL OR o.move_24h_pct IS NULL)
-      ORDER BY s.timestamp ASC
-      LIMIT ?`,
-    [asset, Date.now() - HORIZONS_MS.h1, BATCH_SIZE],
-  )
-}
-
-/**
- * Upsert an outcomes row: insert if outcome_id is NULL, update otherwise.
- */
-async function _upsertOutcome(signalRow, updates) {
-  if (signalRow.outcome_id == null) {
-    // INSERT
-    await store.insert('outcomes', {
-      signal_id:       signalRow.id,
-      asset:           signalRow.asset,
-      price_1h_after:  updates.price_1h_after  ?? null,
-      price_4h_after:  updates.price_4h_after  ?? null,
-      price_24h_after: updates.price_24h_after ?? null,
-      move_1h_pct:     updates.move_1h_pct     ?? null,
-      move_4h_pct:     updates.move_4h_pct     ?? null,
-      move_24h_pct:    updates.move_24h_pct    ?? null,
-    })
-  } else {
-    // UPDATE — only overwrite NULL columns
-    const setClauses = []
-    const params     = []
-
-    if (signalRow.price_1h_after == null && updates.price_1h_after != null) {
-      setClauses.push('price_1h_after = ?', 'move_1h_pct = ?')
-      params.push(updates.price_1h_after, updates.move_1h_pct)
-    }
-    if (signalRow.price_4h_after == null && updates.price_4h_after != null) {
-      setClauses.push('price_4h_after = ?', 'move_4h_pct = ?')
-      params.push(updates.price_4h_after, updates.move_4h_pct)
-    }
-    if (signalRow.price_24h_after == null && updates.price_24h_after != null) {
-      setClauses.push('price_24h_after = ?', 'move_24h_pct = ?')
-      params.push(updates.price_24h_after, updates.move_24h_pct)
-    }
-
-    if (!setClauses.length) return // nothing to update
-
-    params.push(signalRow.outcome_id)
-    await store.run(
-      `UPDATE outcomes SET ${setClauses.join(', ')} WHERE id = ?`,
-      params,
-    )
-  }
-}
-
-/**
- * Process settlement for a single signal row.
- * @returns {Promise<boolean>} true if at least one new horizon was settled
- */
-async function _settleSignal(row) {
-  const triggerPrice = Number(row.trigger_price)
-  if (!triggerPrice) return false
-
-  const now    = Date.now()
-  const ts     = Number(row.timestamp)
   const updates = {}
-  let   changed = false
 
-  // ── +1h horizon ────────────────────────────────────────────────────────────
-  if (row.price_1h_after == null && now >= ts + HORIZONS_MS.h1) {
-    const p = await _priceAt(row.asset, ts + HORIZONS_MS.h1)
-    if (p != null) {
-      updates.price_1h_after = p
-      updates.move_1h_pct    = Math.round(((p - triggerPrice) / triggerPrice) * 1_000_000) / 10_000
-      changed = true
-    }
-  }
+  for (const h of HORIZONS) {
+    // Skip if this horizon's target time has not elapsed yet
+    const targetTs = Number(sig.timestamp) + h.ms
+    if (targetTs > now) continue
 
-  // ── +4h horizon ────────────────────────────────────────────────────────────
-  if (row.price_4h_after == null && now >= ts + HORIZONS_MS.h4) {
-    const p = await _priceAt(row.asset, ts + HORIZONS_MS.h4)
-    if (p != null) {
-      updates.price_4h_after = p
-      updates.move_4h_pct    = Math.round(((p - triggerPrice) / triggerPrice) * 1_000_000) / 10_000
-      changed = true
-    }
-  }
+    // Skip if already settled for this horizon
+    if (outcome?.[`label_${h.key}`] != null) continue
 
-  // ── +24h horizon ───────────────────────────────────────────────────────────
-  if (row.price_24h_after == null && now >= ts + HORIZONS_MS.h24) {
-    const p = await _priceAt(row.asset, ts + HORIZONS_MS.h24)
-    if (p != null) {
-      updates.price_24h_after = p
-      updates.move_24h_pct    = Math.round(((p - triggerPrice) / triggerPrice) * 1_000_000) / 10_000
-      changed = true
-    }
-  }
-
-  if (!changed) return false
-
-  await _upsertOutcome(row, updates)
-
-  // ── Update signals table once 4h is settled (primary outcome horizon) ──────
-  // Trigger when: we just computed a 4h price AND the signal doesn't have an
-  // outcome label yet (outcome IS NULL in the signals table).
-  const just4h = updates.move_4h_pct != null
-  if (just4h && row.outcome == null) {
-    const outcome = _classifyOutcome(updates.move_4h_pct)
-    await store.run(
-      'UPDATE signals SET outcome = ?, outcome_price = ?, pnl = ? WHERE id = ?',
-      [outcome, updates.price_4h_after, updates.move_4h_pct, row.id],
+    // Find the closest ticker at or after the target timestamp
+    const ticks = await store.query(
+      'SELECT spot FROM tickers WHERE asset = ? AND timestamp >= ? ORDER BY timestamp ASC LIMIT 1',
+      [sig.asset, targetTs],
     )
+
+    if (!ticks.length || ticks[0].spot == null) continue
+
+    const priceH    = Number(ticks[0].spot)
+    const ret       = (priceH - triggerPrice) / triggerPrice          // decimal
+    const retPct    = ret * 100                                       // percent
+    const threshold = volAnn != null ? computeThreshold(volAnn, h.days, k) : null
+    const threshPct = threshold != null ? threshold * 100 : null
+    const label     = (threshold != null && sig.direction)
+      ? labelOutcome(sig.direction, ret, threshold)
+      : null
+
+    updates[`price_${h.key}_after`] = priceH
+    updates[`move_${h.key}_pct`]    = Math.round(retPct    * 1_000_000) / 1_000_000
+    updates[`threshold_${h.key}`]   = threshPct != null ? Math.round(threshPct * 1_000_000) / 1_000_000 : null
+    updates[`label_${h.key}`]       = label
   }
 
-  return true
+  if (!Object.keys(updates).length) return
+
+  if (outcome) {
+    // UPDATE existing row
+    const keys      = Object.keys(updates)
+    const setClauses = keys.map(c => `${c} = ?`).join(', ')
+    await store.run(
+      `UPDATE outcomes SET ${setClauses}, updated_at = CURRENT_TIMESTAMP WHERE signal_id = ?`,
+      [...Object.values(updates), sig.id],
+    )
+  } else {
+    // INSERT new row
+    await store.insert('outcomes', {
+      signal_id: sig.id,
+      asset:     sig.asset,
+      ...updates,
+    })
+  }
 }
 
-// ── Main settlement run ───────────────────────────────────────────────────────
+// ── Settlement run ────────────────────────────────────────────────────────────
 
 async function _run() {
-  if (!store.isReady()) return
+  const now = Date.now()
 
-  const assets = ['BTC', 'ETH']
-  let   batch  = 0
+  // The earliest horizon is 1h — only fetch signals at least 1h old.
+  const minHorizonMs = HORIZONS[0].ms
+  const cutoff       = now - minHorizonMs
 
-  for (const asset of assets) {
-    try {
-      const rows = await _loadUnsettledSignals(asset)
+  try {
+    // Fetch directional signals old enough for at least 1h settlement.
+    const signals = await store.query(
+      `SELECT id, asset, timestamp, trigger_price, direction, vol_ann, k
+       FROM signals
+       WHERE direction IS NOT NULL
+         AND timestamp <= ?
+       ORDER BY timestamp ASC
+       LIMIT ?`,
+      [cutoff, BATCH_SIZE],
+    )
 
-      for (const row of rows) {
-        try {
-          const settled = await _settleSignal(row)
-          if (settled) {
-            batch++
-            _settledCount++
-          }
-        } catch (err) {
-          _errorCount++
-          console.error(`[settlement] ${_ts()} — Error settling signal ${row.id}:`, err?.message)
-        }
+    if (!signals.length) return
+
+    // Load existing outcome rows for these signals in one query.
+    const ids = signals.map(s => s.id)
+    const existingOutcomes = await store.query(
+      `SELECT signal_id, label_1h, label_4h, label_24h,
+              price_1h_after, price_4h_after, price_24h_after
+       FROM outcomes
+       WHERE signal_id IN (${ids.map(() => '?').join(',')})`,
+      ids,
+    )
+
+    const outcomeMap = new Map(existingOutcomes.map(o => [Number(o.signal_id), o]))
+
+    let settled = 0
+    for (const sig of signals) {
+      const existing = outcomeMap.get(Number(sig.id)) ?? null
+
+      // Skip fully settled signals (all three horizon labels are non-null — including FLAT)
+      if (existing?.label_1h != null && existing?.label_4h != null && existing?.label_24h != null) continue
+
+      try {
+        await _settleSignal(sig, existing, now)
+        settled++
+      } catch (err) {
+        _errorCount++
+        console.error(`[settlementJob] ${_ts()} — Error settling signal ${sig.id}:`, err?.message)
       }
-    } catch (err) {
-      _errorCount++
-      console.error(`[settlement] ${_ts()} — Error loading signals for ${asset}:`, err?.message)
     }
-  }
 
-  _lastRunAt = Date.now()
-  if (batch > 0) {
-    console.log(`[settlement] ${_ts()} — Settled ${batch} outcome(s) (total: ${_settledCount})`)
+    if (settled > 0) {
+      console.log(`[settlementJob] ${_ts()} — Run #${_runCount}: settled ${settled} signal(s)`)
+    }
+  } catch (err) {
+    _errorCount++
+    console.error(`[settlementJob] ${_ts()} — Run #${_runCount} failed:`, err?.message)
+  } finally {
+    _runCount++
   }
 }
 
@@ -259,26 +177,27 @@ async function _run() {
 
 /**
  * Start the settlement job.
+ * Requires the dataStore to be initialized first (store.isReady() === true).
  */
 function startSettlementJob() {
   if (_isRunning) {
-    console.warn('[settlement] Already running — ignoring duplicate start')
+    console.warn('[settlementJob] Already running — ignoring duplicate start')
     return
   }
 
   if (!store.isReady()) {
-    console.error('[settlement] Database not initialized — call initDatabase() first')
+    console.error('[settlementJob] Database not initialized — call initDatabase() first')
     return
   }
 
   _isRunning = true
-  console.log(`[settlement] Starting — runs every ${SETTLEMENT_INTERVAL_MS / 1_000}s`)
+  console.log(`[settlementJob] Starting — interval ${SETTLEMENT_INTERVAL_MS / 1_000}s`)
 
-  // Run once immediately, then on interval
-  _run().catch(err => console.error('[settlement] Initial run error:', err?.message))
+  // Run immediately on start
+  _run().catch(err => console.error('[settlementJob] Initial run error:', err?.message))
 
   _intervalId = setInterval(() => {
-    _run().catch(err => console.error('[settlement] Run error:', err?.message))
+    _run().catch(err => console.error('[settlementJob] Run error:', err?.message))
   }, SETTLEMENT_INTERVAL_MS)
 }
 
@@ -291,19 +210,18 @@ function stopSettlementJob() {
     _intervalId = null
   }
   _isRunning = false
-  console.log('[settlement] Stopped')
+  console.log('[settlementJob] Stopped')
 }
 
 /**
- * Return current settlement job status.
+ * Return current settlement job status (for health checks).
  */
 function getSettlementStatus() {
   return {
-    running:      _isRunning,
-    lastRunAt:    _lastRunAt,
-    settledCount: _settledCount,
-    errorCount:   _errorCount,
-    intervalMs:   SETTLEMENT_INTERVAL_MS,
+    running:    _isRunning,
+    intervalMs: SETTLEMENT_INTERVAL_MS,
+    runCount:   _runCount,
+    errorCount: _errorCount,
   }
 }
 

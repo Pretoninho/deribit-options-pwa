@@ -3,10 +3,12 @@
  *
  * Analytics & export routes.
  *
- * GET /analytics/stats?asset=BTC&days=7&horizon=4h
- *   Returns edge metrics for a given asset + time window + settlement horizon.
- *   Metrics: win_rate, avg_return, avg_gain, avg_loss, sharpe_ratio, max_drawdown,
- *            trade_count, exposure_time_pct, confidence_interval_95, per-horizon breakdown.
+ * GET /analytics/stats?asset=BTC&days=7
+ * Returns:
+ *   - Legacy: win_rate, avg_gain, avg_loss, sharpe_ratio, max_drawdown, total_signals
+ *   - Per-horizon: win_rate_1h/4h/24h, avg_return_1h/4h/24h
+ *   - By direction: LONG / SHORT breakdown per horizon
+ *   - By vol_source: DVOL / RV breakdown per horizon
  *
  * GET /analytics/export?asset=BTC&type=signals&format=csv&days=30
  *   Export ticks / signals / outcomes as CSV or JSON for offline analysis.
@@ -67,10 +69,7 @@ function _maxDrawdown(returns) {
 }
 
 /**
- * Build an equity curve array from sequential return values.
- * Starts at 100 (notional).
- * @param {number[]} returns
- * @returns {number[]}
+ * Build legacy stats from a list of signal rows (with non-null pnl).
  */
 function _equityCurve(returns) {
   let equity = 100
@@ -152,17 +151,69 @@ function _computeMetrics(returns, windowMs, totalSignals) {
 }
 
 /**
- * Extract return values for a given horizon from outcome-joined signal rows.
+ * Compute per-horizon stats (win_rate, avg_return, total_settled) from joined rows.
+ * @param {object[]} rows     - joined signals+outcomes rows
+ * @param {'1h'|'4h'|'24h'} h - horizon key
+ * @returns {{ win_rate: number|null, avg_return: number|null, total_settled: number }}
  */
-function _returnsForHorizon(rows, horizon) {
-  const col = horizon === '1h' ? 'move_1h_pct'
-    : horizon === '24h'        ? 'move_24h_pct'
-    : 'move_4h_pct'
+function _horizonStats(rows, h) {
+  const labelKey  = `label_${h}`
+  const returnKey = `move_${h}_pct`
 
-  return rows
-    .map(r => (r[col] != null ? Number(r[col]) : null))
-    .filter(v => v != null)
+  const settled = rows.filter(r => r[labelKey] != null)
+  if (!settled.length) return { win_rate: null, avg_return: null, total_settled: 0 }
+
+  const wins    = settled.filter(r => r[labelKey] === 'WIN')
+  const returns = settled.map(r => Number(r[returnKey])).filter(v => !isNaN(v))
+
+  return {
+    win_rate:      Math.round((wins.length / settled.length) * 10000) / 100,
+    avg_return:    returns.length
+      ? Math.round(returns.reduce((a, b) => a + b, 0) / returns.length * 10000) / 10000
+      : null,
+    total_settled: settled.length,
+  }
 }
+
+/**
+ * Build per-direction breakdown (LONG / SHORT) for all three horizons.
+ * @param {object[]} rows
+ * @returns {object}
+ */
+function _directionBreakdown(rows) {
+  const result = {}
+  for (const dir of ['LONG', 'SHORT']) {
+    const subset = rows.filter(r => r.direction === dir)
+    result[dir] = {
+      total: subset.length,
+      '1h': _horizonStats(subset, '1h'),
+      '4h': _horizonStats(subset, '4h'),
+      '24h': _horizonStats(subset, '24h'),
+    }
+  }
+  return result
+}
+
+/**
+ * Build per-vol_source breakdown (DVOL / RV) for all three horizons.
+ * @param {object[]} rows
+ * @returns {object}
+ */
+function _volSourceBreakdown(rows) {
+  const result = {}
+  for (const src of ['DVOL', 'RV']) {
+    const subset = rows.filter(r => r.vol_source === src)
+    result[src] = {
+      total: subset.length,
+      '1h': _horizonStats(subset, '1h'),
+      '4h': _horizonStats(subset, '4h'),
+      '24h': _horizonStats(subset, '24h'),
+    }
+  }
+  return result
+}
+
+// ── Route ─────────────────────────────────────────────────────────────────────
 
 /**
  * Build confusion matrix: counts per signal_type x outcome.
@@ -206,46 +257,49 @@ router.get('/stats', async (req, res) => {
     const since    = Date.now() - days * 24 * 3600 * 1000
     const windowMs = days * 24 * 3600 * 1000
 
-    const signalRows = await store.query(
-      `SELECT s.id, s.signal_type, s.signal_score, s.trigger_price, s.outcome, s.pnl, s.timestamp,
+    // Join signals with outcomes to get per-horizon labels and returns
+    const rows = await store.query(
+      `SELECT s.signal_type, s.signal_score, s.trigger_price, s.outcome, s.pnl,
+              s.timestamp, s.direction, s.vol_source,
+              o.label_1h,  o.label_4h,  o.label_24h,
               o.move_1h_pct, o.move_4h_pct, o.move_24h_pct
-         FROM signals s
-         LEFT JOIN outcomes o ON o.signal_id = s.id
-        WHERE s.asset = ? AND s.timestamp >= ?
-        ORDER BY s.timestamp ASC`,
+       FROM signals s
+       LEFT JOIN outcomes o ON o.signal_id = s.id
+       WHERE s.asset = ? AND s.timestamp >= ?
+       ORDER BY s.timestamp ASC`,
       [asset, since],
     )
 
-    const returns      = _returnsForHorizon(signalRows, horizon)
-    const metrics      = _computeMetrics(returns, windowMs, signalRows.length)
-    const confusionMtx = _confusionMatrix(signalRows)
+    // Legacy stats (pnl-based)
+    const legacyStats = _computeStats(rows)
 
-    // Per-horizon breakdown
-    const horizonBreakdown = {}
-    for (const h of ['1h', '4h', '24h']) {
-      const hReturns = _returnsForHorizon(signalRows, h)
-      if (!hReturns.length) {
-        horizonBreakdown[h] = { settled: 0, win_rate: null, avg_return: null, sharpe_ratio: null }
-      } else {
-        const hWins = hReturns.filter(r => r > 0)
-        horizonBreakdown[h] = {
-          settled:      hReturns.length,
-          win_rate:     Math.round((hWins.length / hReturns.length) * 10000) / 100,
-          avg_return:   Math.round(hReturns.reduce((a, b) => a + b, 0) / hReturns.length * 10000) / 10000,
-          sharpe_ratio: _sharpe(hReturns),
-        }
-      }
-    }
+    // Directional signals only (direction != null) for horizon stats
+    const directional = rows.filter(r => r.direction != null)
 
     const payload = {
       asset,
       days,
-      horizon,
-      ...metrics,
-      horizon_breakdown: horizonBreakdown,
-      confusion_matrix:  confusionMtx,
-      last_update:       new Date().toISOString(),
-      cached:            false,
+      ...legacyStats,
+
+      // Per-horizon win rates and avg returns (directional signals only)
+      win_rate_1h:    _horizonStats(directional, '1h').win_rate,
+      win_rate_4h:    _horizonStats(directional, '4h').win_rate,
+      win_rate_24h:   _horizonStats(directional, '24h').win_rate,
+      avg_return_1h:  _horizonStats(directional, '1h').avg_return,
+      avg_return_4h:  _horizonStats(directional, '4h').avg_return,
+      avg_return_24h: _horizonStats(directional, '24h').avg_return,
+      settled_1h:     _horizonStats(directional, '1h').total_settled,
+      settled_4h:     _horizonStats(directional, '4h').total_settled,
+      settled_24h:    _horizonStats(directional, '24h').total_settled,
+
+      // Breakdown by direction (LONG / SHORT)
+      by_direction: _directionBreakdown(directional),
+
+      // Breakdown by vol source (DVOL / RV)
+      by_vol_source: _volSourceBreakdown(directional),
+
+      last_update: new Date().toISOString(),
+      cached: false,
     }
 
     _cache.set(cacheKey, payload)
@@ -369,3 +423,4 @@ router.get('/export', async (req, res) => {
 })
 
 module.exports = router
+

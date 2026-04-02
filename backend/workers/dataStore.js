@@ -107,10 +107,15 @@ async function _initPostgres(connectionString) {
       outcome_price     DECIMAL(20,8),
       outcome_timestamp BIGINT,
       pnl               DECIMAL(10,4),
+      direction         VARCHAR(10),
+      vol_source        VARCHAR(10),
+      vol_ann           DECIMAL(10,6),
+      k                 DECIMAL(5,3),
       created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE INDEX IF NOT EXISTS idx_signals_asset_ts ON signals (asset, timestamp);
+    CREATE INDEX IF NOT EXISTS idx_signals_asset_direction ON signals (asset, direction);
 
     CREATE TABLE IF NOT EXISTS outcomes (
       id               SERIAL PRIMARY KEY,
@@ -122,10 +127,31 @@ async function _initPostgres(connectionString) {
       move_1h_pct      DECIMAL(8,4),
       move_4h_pct      DECIMAL(8,4),
       move_24h_pct     DECIMAL(8,4),
-      settled_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      threshold_1h     DECIMAL(10,6),
+      label_1h         VARCHAR(10),
+      threshold_4h     DECIMAL(10,6),
+      label_4h         VARCHAR(10),
+      threshold_24h    DECIMAL(10,6),
+      label_24h        VARCHAR(10),
+      settled_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE INDEX IF NOT EXISTS idx_outcomes_signal_id ON outcomes (signal_id);
+
+    -- Migration: add new columns to existing tables (safe to run on each startup)
+    ALTER TABLE signals ADD COLUMN IF NOT EXISTS direction  VARCHAR(10);
+    ALTER TABLE signals ADD COLUMN IF NOT EXISTS vol_source VARCHAR(10);
+    ALTER TABLE signals ADD COLUMN IF NOT EXISTS vol_ann    DECIMAL(10,6);
+    ALTER TABLE signals ADD COLUMN IF NOT EXISTS k          DECIMAL(5,3);
+
+    ALTER TABLE outcomes ADD COLUMN IF NOT EXISTS threshold_1h  DECIMAL(10,6);
+    ALTER TABLE outcomes ADD COLUMN IF NOT EXISTS label_1h      VARCHAR(10);
+    ALTER TABLE outcomes ADD COLUMN IF NOT EXISTS threshold_4h  DECIMAL(10,6);
+    ALTER TABLE outcomes ADD COLUMN IF NOT EXISTS label_4h      VARCHAR(10);
+    ALTER TABLE outcomes ADD COLUMN IF NOT EXISTS threshold_24h DECIMAL(10,6);
+    ALTER TABLE outcomes ADD COLUMN IF NOT EXISTS label_24h     VARCHAR(10);
+    ALTER TABLE outcomes ADD COLUMN IF NOT EXISTS updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
   `
 
   await _pgPool.query(pgSchema)

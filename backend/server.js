@@ -13,6 +13,7 @@ const analyticsRouter = require('./routes/analytics')
 
 const store                              = require('./workers/dataStore')
 const { startDataCollector, getCollectorStatus } = require('./workers/dataCollector')
+const { startSettlementJob, getSettlementStatus } = require('./workers/settlementJob')
 const wsClient                           = require('./workers/deribitWsClient')
 const { startSettlementJob, getSettlementStatus } = require('./workers/settlementJob')
 
