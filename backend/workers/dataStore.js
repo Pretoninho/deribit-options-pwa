@@ -208,6 +208,8 @@ async function _initPostgres(connectionString) {
     `CREATE INDEX IF NOT EXISTS idx_outcomes_signal_id ON outcomes (signal_id)`,
 
     // ── Migrations: add new columns to existing tables (safe to re-run) ────────
+    `ALTER TABLE tickers ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`,
+
     `ALTER TABLE signals ADD COLUMN IF NOT EXISTS direction  VARCHAR(10)`,
     `ALTER TABLE signals ADD COLUMN IF NOT EXISTS vol_source VARCHAR(10)`,
     `ALTER TABLE signals ADD COLUMN IF NOT EXISTS vol_ann    DECIMAL(10,6)`,
