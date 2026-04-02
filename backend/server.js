@@ -39,7 +39,7 @@ app.use(cors({
       'https://pretoninho.github.io',
       'http://localhost:3000',
       'http://localhost:5173',
-      /^https:\/\/veridex-.*\.railway\.app$/,  // Railway previews
+      /^https:\/\/veridex-.*\.railway\.app$/,
     ]
     
     if (!origin || allowedOrigins.some(ao => 
