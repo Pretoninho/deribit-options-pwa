@@ -32,66 +32,89 @@ async function initDatabase() {
 }
 
 function _initSqlite() {
-  // eslint-disable-next-line node/no-unpublished-require
-  const Database = require('better-sqlite3')
-  const dbDir  = path.join(__dirname, '../data')
-  const dbFile = path.join(dbDir, 'veridex.db')
+  try {
+    // eslint-disable-next-line node/no-unpublished-require
+    const Database = require('better-sqlite3')
+    const dbDir  = path.join(__dirname, '../data')
+    const dbFile = path.join(dbDir, 'veridex.db')
 
-  if (!fs.existsSync(dbDir)) {
-    fs.mkdirSync(dbDir, { recursive: true })
-  }
+    console.log(`[dataStore] _initSqlite() starting — dbFile=${dbFile}`)
 
-  // Delete any existing database file so the app always starts with a fresh
-  // schema.  SQLite is stored on ephemeral container storage (no persistent
-  // volume), so there is no data worth preserving across deployments.  Stale
-  // files from previous deployments cause "column does not exist" errors when
-  // the schema has evolved but the old file is reused instead of recreated.
-  if (fs.existsSync(dbFile)) {
-    fs.unlinkSync(dbFile)
-    console.log(`[dataStore] Removed stale database file at ${dbFile}`)
-  }
+    if (!fs.existsSync(dbDir)) {
+      fs.mkdirSync(dbDir, { recursive: true })
+    }
 
-  _db   = new Database(dbFile)
-  _isPg = false
+    // Delete any existing database file so the app always starts with a fresh
+    // schema.  SQLite is stored on ephemeral container storage (no persistent
+    // volume), so there is no data worth preserving across deployments.  Stale
+    // files from previous deployments cause "column does not exist" errors when
+    // the schema has evolved but the old file is reused instead of recreated.
+    if (fs.existsSync(dbFile)) {
+      fs.unlinkSync(dbFile)
+      console.log(`[dataStore] Deleted stale database file at ${dbFile}`)
+    } else {
+      console.log(`[dataStore] No existing database file found at ${dbFile} — starting fresh`)
+    }
 
-  _db.pragma('journal_mode = WAL')
+    console.log(`[dataStore] Creating new SQLite connection at ${dbFile}`)
+    _db   = new Database(dbFile)
+    _isPg = false
+    console.log(`[dataStore] SQLite connection created successfully`)
 
-  const schema = fs.readFileSync(path.join(__dirname, '../db/schema.sql'), 'utf8')
-  _db.exec(schema)
+    _db.pragma('journal_mode = WAL')
 
-  // Migration: add new columns to existing tables that predate the current schema.
-  // SQLite's ALTER TABLE does not support IF NOT EXISTS before 3.35.0, so each
-  // statement is wrapped in a try-catch — a "duplicate column" error is silently
-  // ignored while any other error is re-thrown.
-  const migrations = [
-    // signals table
-    `ALTER TABLE signals ADD COLUMN direction  VARCHAR(10)`,
-    `ALTER TABLE signals ADD COLUMN vol_source VARCHAR(10)`,
-    `ALTER TABLE signals ADD COLUMN vol_ann    DECIMAL(10,6)`,
-    `ALTER TABLE signals ADD COLUMN k          DECIMAL(5,3)`,
-    // outcomes table
-    `ALTER TABLE outcomes ADD COLUMN threshold_1h  DECIMAL(10,6)`,
-    `ALTER TABLE outcomes ADD COLUMN label_1h      VARCHAR(10)`,
-    `ALTER TABLE outcomes ADD COLUMN threshold_4h  DECIMAL(10,6)`,
-    `ALTER TABLE outcomes ADD COLUMN label_4h      VARCHAR(10)`,
-    `ALTER TABLE outcomes ADD COLUMN threshold_24h DECIMAL(10,6)`,
-    `ALTER TABLE outcomes ADD COLUMN label_24h     VARCHAR(10)`,
-    `ALTER TABLE outcomes ADD COLUMN updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP`,
-  ]
+    const schemaPath = path.join(__dirname, '../db/schema.sql')
+    console.log(`[dataStore] Reading schema file from ${schemaPath}`)
+    const schema = fs.readFileSync(schemaPath, 'utf8')
+    console.log(`[dataStore] Schema file read OK (${schema.length} chars) — first 500 chars:\n${schema.slice(0, 500)}`)
 
-  for (const sql of migrations) {
-    try {
-      _db.exec(sql)
-    } catch (err) {
-      // SQLite error code 1 with "duplicate column name" means the column
-      // already exists — safe to ignore.  Any other error is a real problem.
-      if (!err.message.includes('duplicate column name')) {
-        throw err
+    console.log(`[dataStore] Executing schema SQL...`)
+    _db.exec(schema)
+    console.log(`[dataStore] Schema executed successfully`)
+
+    // Migration: add new columns to existing tables that predate the current schema.
+    // SQLite's ALTER TABLE does not support IF NOT EXISTS before 3.35.0, so each
+    // statement is wrapped in a try-catch — a "duplicate column" error is silently
+    // ignored while any other error is re-thrown.
+    const migrations = [
+      // signals table
+      `ALTER TABLE signals ADD COLUMN direction  VARCHAR(10)`,
+      `ALTER TABLE signals ADD COLUMN vol_source VARCHAR(10)`,
+      `ALTER TABLE signals ADD COLUMN vol_ann    DECIMAL(10,6)`,
+      `ALTER TABLE signals ADD COLUMN k          DECIMAL(5,3)`,
+      // outcomes table
+      `ALTER TABLE outcomes ADD COLUMN threshold_1h  DECIMAL(10,6)`,
+      `ALTER TABLE outcomes ADD COLUMN label_1h      VARCHAR(10)`,
+      `ALTER TABLE outcomes ADD COLUMN threshold_4h  DECIMAL(10,6)`,
+      `ALTER TABLE outcomes ADD COLUMN label_4h      VARCHAR(10)`,
+      `ALTER TABLE outcomes ADD COLUMN threshold_24h DECIMAL(10,6)`,
+      `ALTER TABLE outcomes ADD COLUMN label_24h     VARCHAR(10)`,
+      `ALTER TABLE outcomes ADD COLUMN updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP`,
+    ]
+
+    console.log(`[dataStore] Running ${migrations.length} migration statement(s)...`)
+    for (const sql of migrations) {
+      console.log(`[dataStore] Migration: ${sql.trim()}`)
+      try {
+        _db.exec(sql)
+        console.log(`[dataStore] Migration OK: ${sql.trim()}`)
+      } catch (err) {
+        // SQLite error code 1 with "duplicate column name" means the column
+        // already exists — safe to ignore.  Any other error is a real problem.
+        if (!err.message.includes('duplicate column name')) {
+          console.error(`[dataStore] Migration FAILED: ${sql.trim()} — ${err.message}`)
+          throw err
+        }
+        console.log(`[dataStore] Migration skipped (column already exists): ${sql.trim()}`)
       }
     }
-  }
 
-  console.log(`[dataStore] SQLite initialized at ${dbFile}`)
+    console.log(`[dataStore] SQLite initialized at ${dbFile}`)
+  } catch (err) {
+    console.error(`[dataStore] _initSqlite() FAILED — ${err.message}`)
+    console.error(err.stack)
+    throw err
+  }
 }
 
 async function _initPostgres(connectionString) {
