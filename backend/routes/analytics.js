@@ -216,6 +216,19 @@ function _volSourceBreakdown(rows) {
 // ── Route ─────────────────────────────────────────────────────────────────────
 
 /**
+ * Compute legacy (pnl-based) stats from a list of signal rows.
+ * @param {object[]} rows       - signal rows from the DB query
+ * @param {number}   [windowMs] - analysis window in milliseconds (for exposure_time_pct); defaults to 0
+ * @returns {object}
+ */
+function _computeStats(rows, windowMs) {
+  const returns = rows
+    .map(r => (r.pnl != null ? Number(r.pnl) : null))
+    .filter(v => v != null && Number.isFinite(v))
+  return _computeMetrics(returns, windowMs ?? 0, rows.length)
+}
+
+/**
  * Build confusion matrix: counts per signal_type x outcome.
  */
 function _confusionMatrix(rows) {
@@ -271,7 +284,7 @@ router.get('/stats', async (req, res) => {
     )
 
     // Legacy stats (pnl-based)
-    const legacyStats = _computeStats(rows)
+    const legacyStats = _computeStats(rows, windowMs)
 
     // Directional signals only (direction != null) for horizon stats
     const directional = rows.filter(r => r.direction != null)
@@ -364,8 +377,9 @@ router.get('/export', async (req, res) => {
     if (type === 'signals') {
       rows = await store.query(
         `SELECT s.id, s.asset, s.timestamp, s.signal_type, s.signal_score,
-                s.trigger_price, s.outcome, s.outcome_price, s.pnl,
-                o.move_1h_pct, o.move_4h_pct, o.move_24h_pct
+                s.trigger_price, s.direction, s.vol_source, s.outcome, s.outcome_price, s.pnl,
+                o.move_1h_pct, o.move_4h_pct, o.move_24h_pct,
+                o.label_1h, o.label_4h, o.label_24h
            FROM signals s
            LEFT JOIN outcomes o ON o.signal_id = s.id
           WHERE s.asset = ? AND s.timestamp >= ?
@@ -383,8 +397,11 @@ router.get('/export', async (req, res) => {
     } else {
       rows = await store.query(
         `SELECT o.id, o.signal_id, o.asset, s.timestamp AS signal_timestamp,
-                s.trigger_price, o.price_1h_after, o.price_4h_after, o.price_24h_after,
-                o.move_1h_pct, o.move_4h_pct, o.move_24h_pct, o.settled_at
+                s.trigger_price, s.direction,
+                o.price_1h_after, o.price_4h_after, o.price_24h_after,
+                o.move_1h_pct, o.move_4h_pct, o.move_24h_pct,
+                o.threshold_1h, o.label_1h, o.threshold_4h, o.label_4h, o.threshold_24h, o.label_24h,
+                o.settled_at
            FROM outcomes o
            JOIN signals s ON s.id = o.signal_id
           WHERE o.asset = ? AND s.timestamp >= ?
