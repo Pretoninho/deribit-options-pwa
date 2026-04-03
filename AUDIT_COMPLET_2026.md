@@ -1,5 +1,5 @@
-# 📊 AUDIT COMPLET VERIDEX - Rapport Performance & Optimisations
-**Date**: 28 Mars 2026 | **Focalisé sur**: Performance & Optimisations | **Format**: Synthèse Structurée
+# 📊 AUDIT COMPLET VERIDEX - Rapport Performance, Optimisations & Sécurité
+**Date**: 03 Avril 2026 (mis à jour depuis le 28 Mars 2026) | **Focalisé sur**: Performance, Optimisations & Sécurité | **Format**: Synthèse Structurée
 
 ---
 
@@ -12,14 +12,16 @@
 6. [Tableau Récapitulatif des Optimisations](#tableau-récapitulatif)
 7. [Recommandations Prioritaires](#recommendations)
 8. [Strengths du Projet](#strengths)
+9. [🔐 Sécurité — Findings Critiques](#sécurité)
+10. [🆕 Nouveaux Findings — Audit du 03 Avril 2026](#nouveaux-findings)
 
 ---
 
 ## Executive Summary {#executive-summary}
 
-**Verdict**: Veridex est une application **production-ready bien architecturée** avec des **patterns sophistiqués** (SmartCache, Promise.allSettled, PWA). Cependant, plusieurs **bottlenecks de performance** ont été identifiés qui peuvent être corrigés pour des gains **30-300ms par cycle** de données.
+**Verdict**: Veridex est une application **production-ready bien architecturée** avec des **patterns sophistiqués** (SmartCache, Promise.allSettled, PWA). Cependant, plusieurs **bottlenecks de performance** ont été identifiés qui peuvent être corrigés pour des gains **30-300ms par cycle** de données. L'audit du 03 Avril 2026 identifie également des **risques de sécurité critiques** à adresser en priorité.
 
-### Top 3 Bottlenecks Critiques
+### Top 3 Bottlenecks Critiques (28 Mars 2026)
 
 | # | Issue | Localisation | Impact | Effort |
 |---|-------|-----------|--------|--------|
@@ -27,7 +29,20 @@
 | 🔴 **2** | SmartCache jamais utilisé dans React | `/src/interface/pages/SignalsPage.jsx:246` | 30-50ms/render | Easy ⭐ |
 | 🟠 **3** | Double calcul sans early return | `/src/signals/positioning_score.js:80-90` | 5-10ms/call | Easy ⭐ |
 
-**Gain Total Potentiel**: 85-160ms de latence réduite par cycle de signal complet
+**Gain Total Potentiel (Performance)**: 85-160ms de latence réduite par cycle de signal complet
+
+### 🆕 Nouveaux Findings — 03 Avril 2026
+
+| # | Sévérité | Finding | Catégorie | Effort |
+|---|----------|---------|-----------|--------|
+| 🔴 **A** | CRITIQUE | `.env.production` commité dans le dépôt public | Sécurité | Easy ⭐ |
+| 🔴 **B** | CRITIQUE | URL de production hardcodée dans Dockerfile ARG | Sécurité | Easy ⭐ |
+| 🟠 **C** | HIGH | `backend/package.json` sans `"type": "commonjs"` explicite | Backend | Easy ⭐ |
+| 🟠 **D** | HIGH | Double signal engine (frontend vs backend) | Architecture | Medium |
+| 🟠 **E** | HIGH | `dist/` commité dans le dépôt | Git Hygiene | Easy ⭐ |
+| 🟡 **F** | MEDIUM | Fichiers de test co-localisés dans les dossiers sources | Qualité | Low |
+| 🟡 **G** | MEDIUM | React 18 avec Vite 7 / Vitest 4 — évaluer migration React 19 | Dépendances | Medium |
+| 🟡 **H** | MEDIUM | `wrangler.toml` absent dans `/workers/` | Workers | Medium |
 
 ---
 
@@ -922,6 +937,8 @@ export default defineConfig({
 
 ## Tableau Récapitulatif des Optimisations {#tableau-récapitulatif}
 
+### Optimisations Performance (28 Mars 2026)
+
 | # | Priorité | Problème | Fichier | Lignes | Gain Estimé | Difficulté | Effort |
 |---|----------|----------|---------|--------|-------------|-----------|--------|
 | 1 | 🔴 CRITICAL | Max Pain O(n²) | max_pain.js | 113-129 | 50-100ms | Medium | 2-3h |
@@ -936,6 +953,19 @@ export default defineConfig({
 | 10 | 🟠 MEDIUM | Futures serial fetch | SignalsPage.jsx | 228-237 | 100-300ms | Easy | 15min ⭐ |
 
 **Total Gain Potentiel**: 285-680ms latency reduction per complete cycle
+
+### 🆕 Nouveaux Findings (03 Avril 2026)
+
+| # | Sévérité | Problème | Fichier | Impact | Difficulté | Effort |
+|---|----------|----------|---------|--------|-----------|--------|
+| A | 🔴 CRITIQUE | `.env.production` commité | `.gitignore` + `.env.production` | Exposition URL prod, abus API | Easy | 5min ⭐ |
+| B | 🔴 CRITIQUE | URL hardcodée dans Dockerfile ARG | `Dockerfile` | Build avec mauvaise URL | Easy | 5min ⭐ |
+| C | 🟠 HIGH | `"type"` absent dans backend/package.json | `backend/package.json` | Ambiguïté ESM/CJS | Easy | 5min ⭐ |
+| D | 🟠 HIGH | Double signal engine | `src/signals/` + `backend/services/` | Divergence comportement | Medium | 2-4h |
+| E | 🟠 HIGH | `dist/` commité | `.gitignore` | Repo gonflé, désynchronisation | Easy | 5min ⭐ |
+| F | 🟡 MEDIUM | Tests co-localisés dans sources | Multiples dossiers | Cohérence codebase | Low | 1h |
+| G | 🟡 MEDIUM | React 18 / évaluer React 19 | `package.json` | Pas de React Compiler | Medium | 1-2 jours |
+| H | 🟡 MEDIUM | `wrangler.toml` absent | `/workers/` | Workers Cloudflare non configurés | Medium | 1h |
 
 ---
 
@@ -1037,9 +1067,293 @@ Addressing the **Quick Wins** alone would yield **100-200ms latency improvement*
 
 ---
 
-**Report Generated**: 28 Mars 2026
-**Analysis Duration**: ~2 hours (3 automated agents)
+## 🔐 Sécurité — Findings Critiques {#sécurité}
+
+### 🔴 A. `.env.production` Commité dans le Dépôt Public
+
+**Localisation**: `.env.production` (racine du dépôt) + `.gitignore`
+
+**Problème**:
+```
+# ❌ EXPOSÉ PUBLIQUEMENT — .env.production (commité dans le dépôt!)
+VITE_API_BASE_URL=https://veridex-backend.railway.app
+```
+
+Le fichier `.gitignore` ignore `.env` et `.env.local` mais **laisse passer `.env.production`** :
+```gitignore
+.env          # ✅ ignoré
+.env.local    # ✅ ignoré
+# .env.production  ← absent du .gitignore !
+```
+
+**Risques**:
+- Exposition de l'URL du backend en production → vecteur de spam/abus API
+- Reconnaissance d'infrastructure (railway.app révèle l'hébergeur)
+- Toute personne ayant accès au dépôt public peut cibler directement l'API
+
+**Solution**:
+```gitignore
+# Ajouter dans .gitignore :
+.env.production
+.env.*.local
+```
+Et injecter la variable via les secrets CI/Railway (`VITE_API_BASE_URL` en variable d'environnement de build) :
+```yaml
+# GitHub Actions
+env:
+  VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+```
+
+**Effort**: Easy ⭐ (5 minutes)
+**Priorité**: 🔴 CRITIQUE — à corriger immédiatement
+
+---
+
+### 🔴 B. URL de Production Hardcodée dans le Dockerfile
+
+**Localisation**: `Dockerfile` (ARG par défaut)
+
+**Problème**:
+```dockerfile
+# ❌ PROBLÈME — URL de production hardcodée dans le Dockerfile commité
+ARG VITE_API_BASE_URL=https://veridex-production-6327.up.railway.app
+```
+
+- URL exposée dans le Dockerfile commité
+- **Diverge** avec `.env.production` (`https://veridex-backend.railway.app`) → **deux URLs différentes** pour le même backend
+- Si le `ARG` n'est pas overridé lors du build, l'application est buildée avec une URL potentiellement obsolète ou incorrecte
+
+**Solution**:
+```dockerfile
+# Ne pas mettre d'URL par défaut — forcer l'injection via CI
+ARG VITE_API_BASE_URL
+RUN test -n "$VITE_API_BASE_URL" || (echo "ERROR: VITE_API_BASE_URL must be set" && exit 1)
+```
+Et passer l'ARG via Railway/CI lors du build :
+```bash
+docker build --build-arg VITE_API_BASE_URL=${{ secrets.VITE_API_BASE_URL }} .
+```
+
+**Effort**: Easy ⭐ (5 minutes)
+**Priorité**: 🔴 CRITIQUE — à corriger en même temps que le point A
+
+---
+
+## 🆕 Nouveaux Findings — Audit du 03 Avril 2026 {#nouveaux-findings}
+
+### 🟠 C. Backend : `"type"` Absent dans `backend/package.json`
+
+**Localisation**: `backend/package.json`
+
+**Problème**:
+- Le `backend/server.js` utilise `require()` (CommonJS)
+- Le `package.json` **racine** a `"type": "module"` (ESM forcé)
+- Le `backend/package.json` n'a **pas de champ `"type"`**, ce qui implique CommonJS par défaut (comportement correct), mais c'est **implicite et ambigu**
+
+```json
+// backend/package.json (actuel)
+{
+  "name": "veridex-backend",
+  "version": "1.0.0"
+  // "type" absent → CJS par défaut, mais non explicite
+}
+```
+
+**Risque**: Un développeur qui voit `"type": "module"` à la racine pourrait penser que tout le projet est ESM et tenter de migrer le backend, causant des erreurs subtiles.
+
+**Solution**:
+```json
+// backend/package.json (corrigé)
+{
+  "name": "veridex-backend",
+  "version": "1.0.0",
+  "type": "commonjs"
+}
+```
+
+**Effort**: Easy ⭐ (5 minutes)
+**Priorité**: 🟠 HIGH
+
+---
+
+### 🟠 D. Architecture : Double Signal Engine (Frontend vs Backend)
+
+**Localisation**:
+- `/src/signals/signal_engine.js` (~26 KB, ESM, exécuté côté navigateur)
+- `/backend/services/signalEngine.js` (~10 KB, CommonJS, exécuté côté serveur via `/api/signals`)
+
+**Problème**:
+Deux implémentations **parallèles et indépendantes** du même moteur de signal coexistent :
+- Le frontend calcule les signaux localement dans le navigateur
+- Le backend recalcule les signaux via l'API `/api/signals`
+- Les deux peuvent diverger silencieusement au fil du temps
+
+**Risques**:
+- Comportement incohérent entre l'UI (calcul local) et l'API (calcul backend)
+- Doubles maintenances : toute modification logique doit être appliquée aux deux
+- Difficile à tester de manière cohérente
+
+**Solutions envisageables**:
+
+```
+Option 1 — Source of truth backend:
+  Frontend → appelle /api/signals → affiche résultat
+  Avantage: une seule implémentation
+  Inconvénient: latence réseau
+
+Option 2 — Module partagé:
+  packages/signal-engine/ (ESM + CJS dual build)
+  ↗ utilisé par frontend (ESM)
+  ↗ utilisé par backend (require())
+
+Option 3 — Documentation explicite:
+  Documenter quelle implémentation fait autorité
+  Ajouter des tests de parité entre les deux
+```
+
+**Effort**: Medium (2-4h selon l'option choisie)
+**Priorité**: 🟠 HIGH
+
+---
+
+### 🟠 E. `dist/` Commité dans le Dépôt
+
+**Localisation**: `.gitignore` (ligne commentée)
+
+**Problème**:
+```gitignore
+# dist   ← commenté, donc dist/ EST tracké par git
+```
+
+Le dossier `dist/` (build Vite) est présent dans le dépôt et commité. Cela :
+- Augmente inutilement la taille du repo (plusieurs MB de JS minifié)
+- Peut désynchroniser avec le code source (quelqu'un commit du code sans rebuild)
+- Rend les diffs de PR illisibles (des milliers de lignes minifiées)
+
+**Solution**:
+```gitignore
+# .gitignore — décommenter la ligne :
+dist
+```
+Et s'assurer que Railway/CI exécute `npm run build` lors du déploiement.
+
+```bash
+# Nettoyer le tracking existant :
+git rm -r --cached dist/
+git commit -m "chore: remove dist/ from version control"
+```
+
+**Effort**: Easy ⭐ (5 minutes)
+**Priorité**: 🟠 HIGH
+
+---
+
+### 🟡 F. Fichiers de Tests Co-localisés dans les Dossiers Sources
+
+**Localisation**: Multiples dossiers
+
+**Observation**:
+Les fichiers de test sont dispersés dans les dossiers sources sans convention uniforme :
+```
+src/signals/signal_engine.test.js        ← co-localisé avec la source
+src/signals/signal_interpreter.test.js   ← co-localisé avec la source
+src/core/volatility/max_pain.test.js     ← co-localisé avec la source
+backend/routes/analytics.test.js         ← co-localisé avec la source
+src/test/                                ← dossier centralisé pour certains tests
+```
+
+Deux conventions coexistent : co-location et centralisation dans `src/test/`.
+
+**Suggestion**: Établir une convention uniforme dans toute la codebase :
+- **Option A** : Co-location (`.test.js` à côté du fichier source) — cohérent avec Vitest
+- **Option B** : Centralisation dans `src/test/` et `backend/test/`
+
+Quelle que soit l'option, documenter la convention dans le `README` ou un `CONTRIBUTING.md`.
+
+**Effort**: Low (refactoring + config Vitest)
+**Priorité**: 🟡 MEDIUM
+
+---
+
+### 🟡 G. React 18 avec Vite 7 / Vitest 4 — Évaluer React 19
+
+**Localisation**: `package.json`
+
+**Observation**:
+```json
+{
+  "react": "^18.2.0",      // ← React 18
+  "vite": "^7.0.0",        // ← Vite 7 (très récent)
+  "vitest": "^4.1.0",      // ← Vitest 4 (très récent)
+  "lightweight-charts": "^5.1.0"  // ← version majeure récente
+}
+```
+
+**Points d'attention**:
+- **React 19** est disponible depuis fin 2024 et apporte le **React Compiler** (optimisations automatiques de memoization, suppression de `useMemo`/`useCallback` manuels)
+- **Vite 7** et **Vitest 4** sont des versions très récentes — vérifier la compatibilité des plugins utilisés (`vite-plugin-pwa`, etc.)
+- **`lightweight-charts` v5** : version majeure récente, vérifier les breaking changes par rapport à v4
+
+**Actions recommandées**:
+- Évaluer la migration React 18 → 19 (attention aux breaking changes : `ReactDOM.render` → `createRoot`, comportements des `Suspense`, etc.)
+- Vérifier les changelogs Vite 7 et Vitest 4 pour s'assurer que tous les plugins sont compatibles
+- Tester `lightweight-charts` v5 sur toutes les pages qui utilisent des graphiques
+
+**Effort**: Medium (1-2 jours pour React 19, quelques heures pour vérifications)
+**Priorité**: 🟡 MEDIUM
+
+---
+
+### 🟡 H. Workers Cloudflare : `wrangler.toml` Absent dans `/workers/`
+
+**Localisation**: `/workers/package.json` + absence de `wrangler.toml`
+
+**Observation**:
+```json
+// workers/package.json référence wrangler
+{
+  "devDependencies": {
+    "wrangler": "..."
+  }
+}
+```
+
+Mais **aucun `wrangler.toml`** n'est détecté à la racine ni dans `/workers/`. Ce fichier est nécessaire pour :
+- Définir le nom du Worker, les routes, les bindings KV/D1
+- Configurer les environnements (`[env.production]`, `[env.staging]`)
+- Déclencher le déploiement avec `wrangler deploy`
+
+**Risques**:
+- Configuration Cloudflare Workers potentiellement en dehors du dépôt (non versionnée)
+- Impossible de reproduire le déploiement des Workers depuis un nouveau clone
+- Documentation de déploiement incomplète
+
+**Solution**: Ajouter un `wrangler.toml` dans `/workers/` et le commiter dans le dépôt (sans secrets — utiliser `[vars]` pour les variables non-sensibles et les secrets Cloudflare pour les tokens).
+
+**Effort**: Medium (création + test du fichier de config)
+**Priorité**: 🟡 MEDIUM
+
+---
+
+### ✅ Points Positifs Confirmés (03 Avril 2026)
+
+Les éléments suivants, identifiés dans l'audit du 28 Mars, sont **toujours valides et confirmés** :
+
+| ✅ | Point Positif | Localisation |
+|----|--------------|-------------|
+| ✅ | Architecture en couches propre (Data → Compute → UI) | Structure globale |
+| ✅ | `Promise.allSettled` utilisé partout pour la résilience | Multiple fichiers |
+| ✅ | SmartCache FNV-1a bien implémenté | `src/data/data_store/cache.js` |
+| ✅ | PWA correctement configurée (Workbox, CacheFirst/NetworkFirst) | `vite.config.js` |
+| ✅ | Test coverage présent (Vitest, tests dans plusieurs sous-modules) | Multiple fichiers |
+| ✅ | Backend supporte SQLite (dev) + PostgreSQL (prod) avec migration auto | `backend/server.js` |
+| ✅ | `server.js` démarre HTTP avant init DB (health check Railway immédiat) | `backend/server.js` |
+| ✅ | Mode maintenance opérationnel (`MAINTENANCE_MODE` env var) | `backend/server.js` |
+| ✅ | CORS correctement configuré (liste d'origines + regex Railway) | `backend/server.js` |
+
+---
+**Analysis Duration**: ~2 hours (3 automated agents) + mise à jour 03 Avril
 **Codebase Coverage**: ~91 files, 28,183 LOC analyzed
 **Test Coverage Observed**: 188+ Vitest tests
-**Recommendation Count**: 10 major optimizations identified
-**Quick Wins Identified**: 3 (<30min each)
+**Recommendation Count**: 10 optimisations performance + 8 nouveaux findings (sécurité, architecture, qualité)
+**Quick Wins Identified**: 3 performance (<30min each) + 5 sécurité/hygiene (<10min each)
