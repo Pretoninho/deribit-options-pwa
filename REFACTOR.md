@@ -148,7 +148,27 @@ npm run build
 
 ---
 
-## 6) Évolution future (règle anti-dérive)
+## 7) Convention Tests
+
+Les tests unitaires sont **co-localisés** avec leurs fichiers sources :
+
+| Fichier source | Fichier de test |
+|---|---|
+| `src/signals/signal_engine.js` | `src/signals/signal_engine.test.js` |
+| `src/signals/signal_interpreter.js` | `src/signals/signal_interpreter.test.js` |
+| `src/core/volatility/max_pain.js` | `src/core/volatility/max_pain.test.js` |
+| `backend/routes/analytics.js` | `backend/routes/analytics.test.js` |
+| `backend/utils/volThreshold.js` | `backend/utils/volThreshold.test.js` |
+| `src/data/providers/deribit.js` | `src/data/providers/deribit.test.js` |
+
+**Règle** : chaque nouveau module `foo.js` doit avoir son test `foo.test.js` dans le même dossier.
+
+Le dossier `src/test/` contient **uniquement** les fichiers de setup globaux (ex: `setup.js`, mocks globaux).  
+Vitest est configuré pour découvrir `**/*.test.js` dans tout le projet (cf. `vite.config.js`).
+
+---
+
+## 8) Évolution future (règle anti-dérive)
 
 À chaque ajout/suppression de module:
 

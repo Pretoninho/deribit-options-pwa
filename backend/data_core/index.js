@@ -19,6 +19,9 @@ const deribit        = require('./providers/deribit')
 // TTL 30 s — synchronisé avec le cycle de polling minimum
 const _cache = new SmartCache({ ttlMs: 30_000 })
 
+/** Small utility to avoid startup request spikes (rate limit safety). */
+const _sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+
 /**
  * Récupère et normalise toutes les données de marché pour un asset donné.
  * Deribit API uniquement (refactored v2.1).
@@ -64,6 +67,9 @@ async function fetchAllData(asset) {
     const avgAnn7d = avg7Items.length > 0
       ? avg7Items.reduce((s, r) => s + (r.rateAnn ?? 0), 0) / avg7Items.length
       : (funding?.rateAnn ?? null)
+
+    // 200ms pause between phases to stay well under Deribit's 50 req/s rate limit
+    await _sleep(200)
 
     const basisAvg = await deribit.getBasisAvg(asset, spot).catch(() => null)
 

@@ -34,7 +34,7 @@
  */
 
 import { get as idbGet, set as idbSet } from 'idb-keyval'
-import { fnv1a } from '../data/data_store/cache.js'
+import { fnv1a, hashData } from '../data/data_store/cache.js'
 import { calculateGainExample } from './signal_interpreter.js'
 import { calculateMaxPainByExpiry, interpretMaxPain } from '../core/volatility/max_pain.js'
 import { TIMING, STORAGE_LIMITS, getComponentWeights } from '../config/signal_calibration.js'
@@ -763,7 +763,7 @@ function _hashSignal(ctx) {
     ctx.score,
     ctx.recommendation,
     ctx.marketHash ?? '',
-    JSON.stringify(ctx.conditions ?? {}),
+    hashData(ctx.conditions ?? {}),
     ctx.strategySignature ?? 'NO_STRATEGY',
     ctx.marketRegime ?? '',
   ].join('|')
