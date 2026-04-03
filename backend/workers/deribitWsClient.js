@@ -31,6 +31,8 @@ const WS_URL              = process.env.DERIBIT_WS_URL || 'wss://www.deribit.com
 const HEARTBEAT_INTERVAL_S = 30
 const RECONNECT_BASE_MS    = 1_000
 const RECONNECT_MAX_MS     = 30_000
+// Connection is considered stale if no message received for 2× the heartbeat interval
+const STALE_THRESHOLD_MS   = HEARTBEAT_INTERVAL_S * 2 * 1_000
 
 /** Channels to subscribe to on connect. */
 const CHANNELS = [
@@ -258,8 +260,10 @@ class DeribitWsClient extends EventEmitter {
 
   _scheduleReconnect() {
     if (this._isShuttingDown || this._reconnectTimer) return
-    // Exponential backoff capped at RECONNECT_MAX_MS
-    const delay = Math.min(RECONNECT_BASE_MS * (2 ** this._reconnectAttempt), RECONNECT_MAX_MS)
+    // Exponential backoff capped at RECONNECT_MAX_MS with proportional jitter (up to 50% of base delay)
+    const baseDelay = Math.min(RECONNECT_BASE_MS * (2 ** this._reconnectAttempt), RECONNECT_MAX_MS)
+    const jitter    = Math.floor(Math.random() * Math.min(5_000, baseDelay * 0.5))
+    const delay     = baseDelay + jitter
     this._reconnectAttempt++
     this._reconnectCount++
     _log('info', `Reconnecting in ${delay}ms (attempt #${this._reconnectAttempt})…`)
@@ -287,8 +291,18 @@ class DeribitWsClient extends EventEmitter {
       id:     this._nextId(),
       params: { interval: HEARTBEAT_INTERVAL_S },
     })
-    // Also ping the WS transport layer periodically as a safety net
+    // Single consolidated timer: check staleness first, then ping transport
     this._heartbeatTimer = setInterval(() => {
+      // 1. Staleness check — if no message received since connection, reconnect
+      //    (_lastMessageAt is set in _onOpen so it is always non-null here)
+      const now = Date.now()
+      const lastSeen = this._lastMessageAt ?? this._connectTime ?? now
+      if (now - lastSeen > STALE_THRESHOLD_MS) {
+        _log('warn', 'Connection stale — closing for reconnect')
+        try { this._ws?.terminate() } catch (_) { /* ignore */ }
+        return
+      }
+      // 2. Ping transport layer as a safety net
       if (this._ws?.readyState === WebSocket.OPEN) {
         this._ws.ping()
       }

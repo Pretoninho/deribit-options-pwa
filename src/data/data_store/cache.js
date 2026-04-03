@@ -88,55 +88,32 @@ export function hashData(data) {
 
 const CACHE_LOG_IDB_KEY = 'cache_changelog'
 const CACHE_LOG_MAX     = 2000
-const CHANGE_LOG_BATCH_DELAY_MS = 100  // Batch writes toutes les 100ms
+// Debounce persistence: flush in-memory buffer to IDB every 10s (not every entry)
+const CHANGE_LOG_PERSIST_DELAY_MS = 10_000
 
-// OPTIMISATION: Batching des writes IndexedDB au lieu de 1 write par entry
-let _changeLogBatch = []
-let _changeLogBatchTimer = null
-let _changeLogFlushing = false
+// In-memory circular buffer — trimmed here to avoid loading full IDB array on every entry
+const _changeLogBuffer = []
+let _changeLogPersistTimer = null
 
 /**
- * Ajoute une entrée au batch de changelog pour persistence IndexedDB (batched).
- * OPTIMISATION: Réduit I/O IndexedDB de 50+ writes/sec à 10 writes/sec
+ * Ajoute une entrée au buffer en mémoire et planifie la persistence dans IndexedDB.
+ * OPTIMISATION: Évite de charger/sauvegarder tout le tableau IDB à chaque entrée.
  * @param {{ key: string, hash: string, ts: number, type: string }} entry
  */
 function _addChangeLogEntry(entry) {
-  _changeLogBatch.push(entry)
-  _scheduleChangeLogFlush()
-}
-
-/**
- * Schedule un flush du batch après CHANGE_LOG_BATCH_DELAY_MS
- */
-function _scheduleChangeLogFlush() {
-  if (_changeLogFlushing || _changeLogBatchTimer) return
-  _changeLogBatchTimer = setTimeout(_flushChangeLogBatch, CHANGE_LOG_BATCH_DELAY_MS)
-}
-
-/**
- * Flush tout le batch en une seule opération IndexedDB
- * OPTIMISATION: Utiliser _manageCircularBuffer au lieu de splice O(n)
- */
-async function _flushChangeLogBatch() {
-  if (_changeLogFlushing || !_changeLogBatch.length) {
-    _changeLogBatchTimer = null
-    return
+  _changeLogBuffer.push(entry)
+  // Remove oldest entry when over limit (one at a time = O(1) amortized at steady state)
+  if (_changeLogBuffer.length > CACHE_LOG_MAX) {
+    _changeLogBuffer.shift()
   }
-
-  _changeLogFlushing = true
-  _changeLogBatchTimer = null
-
-  try {
-    const log = (await idbGet(CACHE_LOG_IDB_KEY)) ?? []
-    log.push(..._changeLogBatch)
-    // OPTIMISATION: Utiliser shift() au lieu de splice() pour circular buffer
-    _manageCircularBuffer(log, CACHE_LOG_MAX)
-    await idbSet(CACHE_LOG_IDB_KEY, log)
-    _changeLogBatch = []
-  } catch (_) {
-    // Silencieusement ignoré comme avant
-  } finally {
-    _changeLogFlushing = false
+  // Debounce: only write to IDB every CHANGE_LOG_PERSIST_DELAY_MS
+  if (!_changeLogPersistTimer) {
+    _changeLogPersistTimer = setTimeout(async () => {
+      try {
+        await idbSet(CACHE_LOG_IDB_KEY, [..._changeLogBuffer])
+      } catch (_) {}
+      _changeLogPersistTimer = null
+    }, CHANGE_LOG_PERSIST_DELAY_MS)
   }
 }
 
@@ -165,11 +142,16 @@ function _manageCircularBuffer(arr, maxSize) {
 
 /**
  * Retourne le journal persisté des changements du SmartCache.
+ * Lit depuis le buffer en mémoire si disponible, sinon depuis IndexedDB.
  * @param {number} [limit=500]
  * @returns {Promise<Array<{ key: string, hash: string, ts: number }>>}
  */
 export async function getCacheChangeLog(limit = 500) {
   try {
+    // Prefer in-memory buffer (most recent, no IDB round-trip)
+    if (_changeLogBuffer.length > 0) {
+      return _changeLogBuffer.slice(-limit).reverse()
+    }
     const log = (await idbGet(CACHE_LOG_IDB_KEY)) ?? []
     return log.slice(-limit).reverse()
   } catch (_) {
@@ -181,6 +163,11 @@ export async function getCacheChangeLog(limit = 500) {
  * Efface le journal persisté des changements du SmartCache.
  */
 export async function clearCacheChangeLog() {
+  _changeLogBuffer.splice(0, _changeLogBuffer.length)
+  if (_changeLogPersistTimer) {
+    clearTimeout(_changeLogPersistTimer)
+    _changeLogPersistTimer = null
+  }
   try {
     await idbSet(CACHE_LOG_IDB_KEY, [])
   } catch (_) {}
